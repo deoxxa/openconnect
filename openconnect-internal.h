@@ -378,6 +378,7 @@ struct openconnect_info {
 	struct esp esp_out;
 	int enc_key_len;
 	int hmac_key_len;
+	in_addr_t esp_magic; /* GlobalProtect magic ping address (network-endian) */
 
 	int tncc_fd; /* For Juniper TNCC */
 	const char *csd_xmltag;
@@ -875,6 +876,8 @@ int gpst_xml_or_error(struct openconnect_info *vpninfo, int result, char *respon
 					  char **prompt, char **inputStr);
 int gpst_setup(struct openconnect_info *vpninfo);
 int gpst_mainloop(struct openconnect_info *vpninfo, int *timeout);
+int gpst_esp_send_probes(struct openconnect_info *vpninfo);
+int gpst_esp_catch_probe(struct openconnect_info *vpninfo, struct pkt *pkt);
 
 /* lzs.c */
 int lzs_decompress(unsigned char *dst, int dstlen, const unsigned char *src, int srclen);
@@ -920,6 +923,7 @@ int verify_packet_seqno(struct openconnect_info *vpninfo,
 int esp_setup(struct openconnect_info *vpninfo, int dtls_attempt_period);
 int esp_mainloop(struct openconnect_info *vpninfo, int *timeout);
 void esp_close(struct openconnect_info *vpninfo);
+void esp_close_secret(struct openconnect_info *vpninfo);
 void esp_shutdown(struct openconnect_info *vpninfo);
 int print_esp_keys(struct openconnect_info *vpninfo, const char *name, struct esp *esp);
 
