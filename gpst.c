@@ -30,6 +30,11 @@
 #ifdef HAVE_LZ4
 #include <lz4.h>
 #endif
+
+#ifdef __FreeBSD__
+#include <sys/types.h>
+#include <netinet/in.h>
+#endif
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
 
