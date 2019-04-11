@@ -109,6 +109,7 @@ OPENCONNECT_PRIVATE {
 	openconnect_open_utf8;
 	openconnect_sha1;
 	openconnect_version_str;
+	openconnect_setup_esp_keys;
  local:
 	*;
 };
