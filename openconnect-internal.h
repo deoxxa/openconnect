@@ -938,6 +938,7 @@ int openconnect_setup_esp_keys(struct openconnect_info *vpninfo, int new_keys);
 
 /* {gnutls,openssl}-esp.c */
 int init_esp_ciphers(struct openconnect_info *vpninfo, struct esp *out, struct esp *in);
+int aesni_init_esp_ciphers(struct openconnect_info *vpninfo, struct esp *out, struct esp *in);
 
 /* {gnutls,openssl}.c */
 int ssl_nonblock_read(struct openconnect_info *vpninfo, void *buf, int maxlen);
