@@ -28,6 +28,27 @@
 
 uint64_t OPENCONNECT_ia32cap_P[2];
 
+static inline void store_be64(void *p, uint64_t val)
+{
+	*(uint64_t *)p = __builtin_bswap64(val);
+}
+
+
+#if 0
+static void X_sha1_block_data_order(struct aesni_sha1 *sha, unsigned char *data, int len)
+{
+	int i, j;
+
+	for (j = 0; j < len; j++) {
+		printf("%p(%d):", sha, sha->N + (j * SHA1_BLOCK));
+		for (i=0; i < SHA1_BLOCK; i++)
+			printf(" %02x", data[(j * SHA1_BLOCK + i)]);
+		printf("\n");
+	}
+	sha1_block_data_order(sha, data, len);
+}
+#define sha1_block_data_order X_sha1_block_data_order
+#endif
 static inline void aesni_sha1_init(struct aesni_sha1 *ctx, uint64_t len)
 {
 	ctx->h0 = 0x67452301UL;
@@ -90,8 +111,7 @@ static void aesni_sha1_final(struct aesni_sha1 *sha, unsigned char *out, unsigne
 		len = 0;
 	}
 	memset(buf + len, 0, SHA1_BLOCK - len - 8);
-	N = (void *)&buf[SHA1_BLOCK - 8];
-        *N = __builtin_bswap64(sha->N << 3);
+	store_be64(&buf[SHA1_BLOCK - 8], sha->N << 3);
 	sha1_block_data_order(sha, buf, 1);
 
 	store_be32(out, sha->h0);
@@ -143,9 +163,12 @@ static int aesni_encrypt_esp_packet(struct openconnect_info *vpninfo, struct pkt
 {
 	struct esp *esp = &vpninfo->esp_out;
 	struct aesni_hmac hmac = esp->aesni_hmac;
+	unsigned char *esp_p = (unsigned char *)&pkt->esp;
+	unsigned char *data_p = pkt->data;
+	uint64_t *p64, padword = 0x0807060504030201;
 	int i, padlen;
 	const int blksize = 16;
-	int crypt_len;
+	int crypt_len, shablk_end;
 	int stitched = 0;
 
 #define PRECBC 64
@@ -158,44 +181,83 @@ static int aesni_encrypt_esp_packet(struct openconnect_info *vpninfo, struct pkt
 	memcpy(pkt->esp.iv, esp->iv, sizeof(pkt->esp.iv));
 
 	padlen = blksize - 1 - ((pkt->len + 1) % blksize);
-	for (i=0; i<padlen; i++)
-		pkt->data[pkt->len + i] = i + 1;
-	pkt->data[pkt->len + padlen] = padlen;
-	pkt->data[pkt->len + padlen + 1] = 0x04; /* Legacy IP */
+	p64 = (uint64_t *)(data_p + pkt->len);
+	for (i = 0; i < padlen; i += 8) {
+		*(p64++) = padword;
+		padword += 0x0808080808080808;
+	}
+
+	data_p[pkt->len + padlen] = padlen;
+	data_p[pkt->len + padlen + 1] = 0x04; /* Legacy IP */
 
 	crypt_len = pkt->len + padlen + 2;
 
 	/* Encrypt the first block */
 	if (crypt_len >= PRECBC + BLK) {
-		aesni_cbc_encrypt(pkt->data, pkt->data, PRECBC, &esp->aesni_key,
-				  (unsigned char *)&esp->iv, 1);
+		aesni_cbc_encrypt(data_p, data_p, PRECBC, &esp->aesni_key,
+				  esp->iv, 1);
 
 		/* Then the stitched part */
 		stitched = (crypt_len - PRECBC) / BLK;
-		aesni_cbc_sha1_enc(pkt->data + PRECBC, pkt->data + PRECBC, stitched, &esp->aesni_key,
-				   (unsigned char *)&esp->iv, &hmac.i, &pkt->esp);
+		aesni_cbc_sha1_enc(data_p + PRECBC, data_p + PRECBC, stitched, &esp->aesni_key,
+				   esp->iv, &hmac.i, &pkt->esp);
 		hmac.i.N += (stitched * BLK);
 
 		stitched *= BLK;
 
 		/* Now encrypt anything remaining */
 		if (crypt_len > stitched + PRECBC)
-			aesni_cbc_encrypt(pkt->data + stitched + PRECBC, pkt->data + stitched + PRECBC,
+			aesni_cbc_encrypt(data_p + stitched + PRECBC, data_p + stitched + PRECBC,
 					  crypt_len - stitched - PRECBC,
-					  &esp->aesni_key, (unsigned char *)&esp->iv, 1);
+					  &esp->aesni_key, esp->iv, 1);
 	} else {
-		aesni_cbc_encrypt(pkt->data + stitched, pkt->data + stitched,
-				  crypt_len - stitched, &esp->aesni_key, (unsigned char *)&esp->iv, 1);
+		aesni_cbc_encrypt(data_p + stitched, data_p + stitched,
+				  crypt_len - stitched, &esp->aesni_key, esp->iv, 1);
 	}
 
 	/* And now fold in the final part of the HMAC, which is two blocks plus the ESP header behind */
-	complete_sha1_hmac(&hmac, pkt->data + crypt_len,
-			   (unsigned char *)&pkt->esp + stitched,
-			   crypt_len - stitched + sizeof(pkt->esp));
+
+	/* The 0x80 end marker will always fit into the hash block with the encrypted packet,
+	 * as the crypto block size is 16 bytes and the ESP header is only 24. */
+	*(uint64_t *)(data_p + crypt_len) = 0x80;
+
+	/* Calculate and clear the end of the SHA1 block (64 bytes), bearing in mind
+	 * that it starts at the ESP header, but is referenced via the data pointer. */
+	shablk_end = ((crypt_len + sizeof(pkt->esp) + 8 + (SHA1_BLOCK-1)) & ~(SHA1_BLOCK-1)) - sizeof(pkt->esp);
+	memset(data_p + crypt_len + 8, 0, shablk_end - crypt_len - 8);
+
+	if (shablk_end > crypt_len + 8) {
+		/* SHA1 count also happens to fit into this hash block. Include it, and we're done. */
+		store_be64(data_p + shablk_end - 8, (crypt_len + sizeof(pkt->esp) + SHA1_BLOCK) << 3);
+		sha1_block_data_order(&hmac.i, esp_p + stitched, ((shablk_end + sizeof(pkt->esp) - stitched) / SHA1_BLOCK));
+	} else {
+		/* Include last data block (from the packet), trailed with zeroes. */
+		sha1_block_data_order(&hmac.i, esp_p + stitched, (shablk_end + sizeof(pkt->esp) - stitched) / SHA1_BLOCK);
+
+		/* We need a new, mostly-zero, hash block for the length. */
+		memset(esp->aesni_hmac_block, 0, 21);
+		store_be64(&esp->aesni_hmac_block[SHA1_BLOCK - 8], (crypt_len + sizeof(pkt->esp) + SHA1_BLOCK) << 3);
+		sha1_block_data_order(&hmac.i, esp->aesni_hmac_block, 1);
+	}
+
+	/* Now calculate the outer hash of the HMAC */
+	store_be32(esp->aesni_hmac_block, hmac.i.h0);
+	store_be32(esp->aesni_hmac_block + 4, hmac.i.h1);
+	store_be32(esp->aesni_hmac_block + 8, hmac.i.h2);
+	store_be32(esp->aesni_hmac_block + 12, hmac.i.h3);
+	store_be32(esp->aesni_hmac_block + 16, hmac.i.h4);
+
+	/* Outer SHA1 completion */
+	esp->aesni_hmac_block[20] = 0x80;
+	store_be64(&esp->aesni_hmac_block[SHA1_BLOCK - 8], (SHA1_BLOCK + 20) << 3);
+	sha1_block_data_order(&hmac.o, esp->aesni_hmac_block, 1);
+
+	store_be32(data_p + crypt_len, hmac.o.h0);
+	store_be32(data_p + crypt_len + 4, hmac.o.h1);
+	store_be32(data_p + crypt_len + 8, hmac.o.h2);
 
 	/* Generate IV for next packet */
-	aesni_cbc_encrypt(pkt->data + crypt_len + 8, (unsigned char *)&esp->iv, 16,
-			  &esp->aesni_key, (unsigned char *)&esp->iv, 1);
+	aesni_cbc_encrypt(data_p + crypt_len + 8, esp->iv, 16, &esp->aesni_key, esp->iv, 1);
 
  	return sizeof(pkt->esp) + crypt_len + 12;
 }
@@ -223,8 +285,13 @@ static int aesni_init_esp_cipher(struct openconnect_info *vpninfo, struct esp *e
 
 	setup_sha1_hmac(esp, esp->hmac_key, 20 /*esp->hmac_key_len*/);
 
-	esp->seq = 0;
-	esp->seq_backlog = 0;
+	if (!esp->aesni_hmac_block) {
+		esp->aesni_hmac_block = calloc(1, SHA1_BLOCK);
+		if (!esp->aesni_hmac_block)
+			return -ENOMEM;
+	}
+
+	vpninfo->pkt_trailer = 17 + 16 + 20 + 64; /* 17 for pad, 16 for IV, 64 for HMAC blocking */
 	return 0;
 }
 
