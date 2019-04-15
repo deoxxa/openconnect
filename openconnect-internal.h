@@ -91,6 +91,10 @@
 #include <libp11.h>
 #endif
 
+#ifdef AESNI_ASM
+#include "aesni-esp.h"
+#endif
+
 #ifdef ENABLE_NLS
 #include <libintl.h>
 #define _(s) dgettext("openconnect", s)
@@ -338,6 +342,11 @@ struct esp {
 #elif defined(OPENCONNECT_OPENSSL)
 	HMAC_CTX *hmac;
 	EVP_CIPHER_CTX *cipher;
+#endif
+#ifdef AESNI_ASM
+	struct aesni_hmac aesni_hmac;
+	struct aesni_key aesni_key;
+	unsigned char *aesni_hmac_block;
 #endif
 	uint64_t seq_backlog;
 	uint64_t seq;
