@@ -638,6 +638,10 @@ struct openconnect_info {
 
 	const char *quit_reason;
 
+	void (*destroy_esp_ciphers)(struct esp *esp);
+	int (*decrypt_esp_packet)(struct openconnect_info *vpninfo, struct esp *esp, struct pkt *pkt);
+	int (*encrypt_esp_packet)(struct openconnect_info *vpninfo, struct pkt *pkt);
+
 	int verbose;
 	void *cbdata;
 	openconnect_validate_peer_cert_vfn validate_peer_cert;
@@ -933,10 +937,7 @@ int print_esp_keys(struct openconnect_info *vpninfo, const char *name, struct es
 int openconnect_setup_esp_keys(struct openconnect_info *vpninfo, int new_keys);
 
 /* {gnutls,openssl}-esp.c */
-void destroy_esp_ciphers(struct esp *esp);
 int init_esp_ciphers(struct openconnect_info *vpninfo, struct esp *out, struct esp *in);
-int decrypt_esp_packet(struct openconnect_info *vpninfo, struct esp *esp, struct pkt *pkt);
-int encrypt_esp_packet(struct openconnect_info *vpninfo, struct pkt *pkt);
 
 /* {gnutls,openssl}.c */
 int ssl_nonblock_read(struct openconnect_info *vpninfo, void *buf, int maxlen);
