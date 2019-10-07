@@ -85,6 +85,39 @@ CentOS6/OpenSSL:
     paths:
       - tests/*.log
 
+Fedora/Coverity:
+  only:
+    refs:
+       - coverity
+  script:
+  - dnf update -y
+  - dnf install -y git autoconf automake libtool python gettext make
+    'pkgconfig(openssl)' 'pkgconfig(libxml-2.0)' 'pkgconfig(liblz4)'
+    'pkgconfig(gnutls)' trousers-devel 'pkgconfig(libpcsclite)'
+    'pkgconfig(libproxy-1.0)' 'pkgconfig(liboath)' 'pkgconfig(stoken)'
+    ocserv softhsm 'pkgconfig(uid_wrapper)' 'pkgconfig(socket_wrapper)'
+    vpnc-script 'pkgconfig(libpskc)' 'pkgconfig(libpcsclite)' tss2-devel
+    java-devel-openjdk glibc-langpack-cs iproute iputils nuttcp
+    'pkgconfig(tss2-esys)'
+  - curl -o /tmp/cov-analysis-linux64.tgz https://scan.coverity.com/download/linux64 -d "project=$COVERITY_SCAN_PROJECT_NAME&token=$COVERITY_SCAN_TOKEN"
+  - tar xvfz /tmp/cov-analysis-linux64.tgz
+  - ./autogen.sh
+  - ./configure --with-java --disable-dsa-tests
+  - PATH=`pwd`/cov-analysis-linux64-*/bin:$PATH cov-build --dir cov-int make -j4
+  - tar cvfz cov-int.tar.gz cov-int
+  - curl --form token=$COVERITY_SCAN_TOKEN
+    --form email=dwmw2@infradead.org --form file=@cov-int.tar.gz --form version="`git describe --tags`"
+    --form description="CI build" https://scan.coverity.com/builds?project=$COVERITY_SCAN_PROJECT_NAME
+  tags:
+  - shared
+  except:
+  - tags
+  artifacts:
+    expire_in: 1 week
+    when: on_failure
+    paths:
+      - cov-int/*.txt
+
 Fedora/GnuTLS:
   script:
   - dnf update -y
@@ -95,6 +128,7 @@ Fedora/GnuTLS:
     ocserv softhsm 'pkgconfig(uid_wrapper)' 'pkgconfig(socket_wrapper)'
     vpnc-script 'pkgconfig(libpskc)' 'pkgconfig(libpcsclite)' tss2-devel
     java-devel-openjdk glibc-langpack-cs iproute iputils nuttcp
+    'pkgconfig(tss2-esys)'
   - ./autogen.sh
   - ./configure --with-java --disable-dsa-tests CFLAGS=-g
   - make tmp-distdir
