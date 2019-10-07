@@ -98,13 +98,18 @@ Fedora/Coverity:
     ocserv softhsm 'pkgconfig(uid_wrapper)' 'pkgconfig(socket_wrapper)'
     vpnc-script 'pkgconfig(libpskc)' 'pkgconfig(libpcsclite)' tss2-devel
     java-devel-openjdk glibc-langpack-cs iproute iputils nuttcp
-    'pkgconfig(tss2-esys)'
+    'pkgconfig(tss2-esys)' 'pkgconfig(krb5-gssapi)' 'pkgconfig(libp11)'
   - curl -o /tmp/cov-analysis-linux64.tgz https://scan.coverity.com/download/linux64 -d "project=$COVERITY_SCAN_PROJECT_NAME&token=$COVERITY_SCAN_TOKEN"
-  - tar xvfz /tmp/cov-analysis-linux64.tgz
+  - tar xfz /tmp/cov-analysis-linux64.tgz
+  - export COVBIN=`pwd`/cov-analysis-linux64-*/bin
+  - export PATH=$COVBIN:$PATH
   - ./autogen.sh
+  - ./configure --with-java --without-gnutls --with-openssl --disable-dsa-tests
+  - cov-build --dir cov-int make -j4
+  - make clean
   - ./configure --with-java --disable-dsa-tests
-  - PATH=`pwd`/cov-analysis-linux64-*/bin:$PATH cov-build --dir cov-int make -j4
-  - tar cvfz cov-int.tar.gz cov-int
+  - cov-build --dir cov-int make -j4
+  - tar cfz cov-int.tar.gz cov-int
   - curl --form token=$COVERITY_SCAN_TOKEN
     --form email=dwmw2@infradead.org --form file=@cov-int.tar.gz --form version="`git describe --tags`"
     --form description="CI build" https://scan.coverity.com/builds?project=$COVERITY_SCAN_PROJECT_NAME
@@ -156,6 +161,7 @@ Fedora/GnuTLS/clang:
     ocserv softhsm 'pkgconfig(uid_wrapper)' 'pkgconfig(socket_wrapper)'
     vpnc-script 'pkgconfig(libpskc)' 'pkgconfig(libpcsclite)' tss2-devel
     java-devel-openjdk clang glibc-langpack-cs iproute iputils nuttcp
+    'pkgconfig(tss2-esys)' 'pkgconfig(krb5-gssapi)' 'pkgconfig(libp11)'
   - ./autogen.sh
   - ./configure --with-java --disable-dsa-tests CC=clang CFLAGS=-g
   - make tmp-distdir
@@ -183,6 +189,7 @@ Fedora/OpenSSL:
     ocserv softhsm 'pkgconfig(uid_wrapper)' 'pkgconfig(socket_wrapper)'
     vpnc-script 'pkgconfig(libpskc)' 'pkgconfig(libpcsclite)'
     java-devel-openjdk glibc-langpack-cs iproute iputils nuttcp
+    'pkgconfig(krb5-gssapi)' 'pkgconfig(libp11)'
 # Re-enable DSA since we test it
   - update-crypto-policies --set LEGACY
   - ./autogen.sh
@@ -212,6 +219,7 @@ Fedora/OpenSSL/clang:
     ocserv softhsm 'pkgconfig(uid_wrapper)' 'pkgconfig(socket_wrapper)'
     vpnc-script 'pkgconfig(libpskc)' 'pkgconfig(libpcsclite)'
     java-devel-openjdk clang glibc-langpack-cs iproute iputils nuttcp
+    'pkgconfig(krb5-gssapi)' 'pkgconfig(libp11)'
 # Re-enable DSA since we test it
   - update-crypto-policies --set LEGACY
   - ./autogen.sh
