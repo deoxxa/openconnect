@@ -101,15 +101,15 @@ Fedora/Coverity:
     'pkgconfig(tss2-esys)' 'pkgconfig(krb5-gssapi)' 'pkgconfig(libp11)'
   - curl -o /tmp/cov-analysis-linux64.tgz https://scan.coverity.com/download/linux64 -d "project=$COVERITY_SCAN_PROJECT_NAME&token=$COVERITY_SCAN_TOKEN"
   - tar xfz /tmp/cov-analysis-linux64.tgz
-  - export COVBIN=`pwd`/cov-analysis-linux64-*/bin
-  - export PATH=$COVBIN:$PATH
+  - export COVBIN=cov-analysis-linux64-*/bin
+  - export PATH=`pwd`/$COVBIN:$PATH
   - echo $COVBIN - $PATH
   - ./autogen.sh
   - ./configure --with-java --without-gnutls --with-openssl --disable-dsa-tests
-  - ./cov-analysis-linux64-*/bin/cov-build --dir cov-int make -j4
+  - cov-build --dir cov-int make -j4
   - make clean
   - ./configure --with-java --disable-dsa-tests
-  - ./cov-analysis-linux64-*/bin/cov-build --dir cov-int make -j4
+  - cov-build --dir cov-int make -j4
   - tar cfz cov-int.tar.gz cov-int
   - curl --form token=$COVERITY_SCAN_TOKEN
     --form email=dwmw2@infradead.org --form file=@cov-int.tar.gz --form version="`git describe --tags`"
