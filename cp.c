@@ -503,6 +503,42 @@ static int cpo_get_index(const cp_options *cfg, const cp_option *opt)
     return opt - cfg->elems;
 }
 
+static struct oc_vpn_option *find_option(struct openconnect_info *vpninfo, const char *key)
+{
+    struct oc_vpn_option *opt = vpninfo->cstp_options;
+    struct oc_vpn_option *next;
+    for (; opt; opt = next) {
+        if (0 == strcmp(key, opt->option))
+            return opt;
+        next = opt->next;
+    }
+    return NULL;
+}
+
+static const char *get_option(struct openconnect_info *vpninfo, const char *key)
+{
+    struct oc_vpn_option *opt = find_option(vpninfo, key);
+    return opt ? opt->value : NULL;
+}
+
+static const char *add_option(struct openconnect_info *vpninfo, const char *key,
+        const char *val)
+{
+    return val?add_option_dup(&vpninfo->cstp_options, key, val, -1):NULL;
+}
+
+static const char *set_option(struct openconnect_info *vpninfo, const char *key,
+        const char *val)
+{
+    struct oc_vpn_option *opt = find_option(vpninfo, key);
+    if (opt) {
+        free(opt->value);
+        opt->value = strdup(val);
+    } else
+        return add_option(vpninfo, key, val);
+    return opt->value;
+}
+
 static int snx_start_tunnel(struct openconnect_info *vpninfo)
 {
     /* No-op */
