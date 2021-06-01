@@ -215,6 +215,100 @@ static int send_disconnect(struct openconnect_info *vpninfo)
     return snx_send_command(vpninfo, disconnect, 1);
 }
 
+/* Authentication-related helpers. */
+static
+int enc_dec_table[] = {
+    0x2D, 0x4F, 0x44, 0x49, 0x46, 0x49, 0x45, 0x44, 0x26, 0x57, 0x30, 0x52, 0x4F, 0x50, 0x45, 0x52,
+    0x54, 0x59, 0x33, 0x48, 0x45, 0x45, 0x54, 0x37, 0x49, 0x54, 0x48, 0x2F, 0x2B, 0x34, 0x48, 0x45,
+    0x33, 0x48, 0x45, 0x45, 0x54, 0x29, 0x24, 0x33, 0x3F, 0x2C, 0x24, 0x21, 0x30, 0x3F, 0x21, 0x35,
+    0x3F, 0x30, 0x32, 0x2F, 0x30, 0x25, 0x32, 0x34, 0x29, 0x25, 0x33, 0x2E, 0x35, 0x2C, 0x2C, 0x10,
+    0x26, 0x37, 0x3F, 0x37, 0x30, 0x3F, 0x2F, 0x22, 0x2A, 0x25, 0x23, 0x34, 0x33, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+/* Reverse string in-place. len is always even. */
+static void strrv(char *data, int len)
+{
+    int i, j;
+    char c;
+    for (i = 0; i < len / 2; i++) {
+        j = len - i - 1;
+        c = data[j];
+        data[j] = data[i];
+        data[i] = c;
+    }
+}
+
+static void bytes_from_hex(const char *hex, uint8_t *bytes)
+{
+    int len = strlen(hex);
+    uint32_t off = 0, val;
+    int i;
+    for (i = 0; i < len / 2; i++) {
+        off += 2 * sscanf(hex + off, "%2x", &val);
+        bytes [i] = val & 0xff;
+    }
+}
+
+static void hex_from_bytes(const uint8_t *bytes, int len, char *hex)
+{
+    int off = 0, i;
+    for (i = 0; i < len; i++)
+        off += sprintf(hex + off, "%02hx", (uint16_t) bytes[i]);
+    hex[off] = '\0';
+}
+
+static
+uint8_t enc_dec_ichr(int i, uint8_t ordc)
+{
+    int idx;
+    uint8_t ret;
+    uint64_t prod = (((uint64_t) i) * (0x3531DEC1));
+    uint64_t high_bits = prod >> (32 + 4);
+    int ofs1 = high_bits;
+    int ofs2 = ofs1 + ofs1 * 8;
+    ofs2 = ofs1 + ofs2 * 2;
+    ofs2 = ofs1 + ofs2 * 4;
+    idx = i - ofs2;
+
+    if (ordc == 0xff) {
+        ordc = 0;
+    }
+
+    ret = ((enc_dec_table[idx] ^ ordc));
+    if (ret == 0) {
+        ret = 0xff;
+    }
+    return ret;
+}
+
+static char *encode(const char *s)
+{
+    int i, slen = strlen(s);
+    char *ret = calloc(1, 2 * slen + 1);
+    char *tmp = strdup(s);
+
+    for (i = 0; i < slen; i++)
+        tmp[i] = enc_dec_ichr(i, (uint8_t) tmp[i]);
+
+    strrv(tmp, slen);
+    hex_from_bytes((uint8_t *) tmp, slen, ret);
+    free_pass(&tmp);
+    return ret;
+}
+
+static char *decode(const char *s)
+{
+    int i, slen = strlen(s), retlen = slen / 2;
+    char *ret = calloc(retlen + 1, 1);
+    bytes_from_hex(s, (uint8_t *) ret);
+    strrv(ret, retlen);
+    for (i = 0; i < retlen; i++)
+        ret[i] = enc_dec_ichr(i, (uint8_t) ret[i]);
+    ret[retlen] = 0;
+    return ret;
+}
+
 static int snx_start_tunnel(struct openconnect_info *vpninfo)
 {
     /* No-op */
