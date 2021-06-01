@@ -309,6 +309,200 @@ static char *decode(const char *s)
     return ret;
 }
 
+/* Options handling helpers. Needed for server response processing.
+ * Unfortunately, option syntax is not standard http/xml, but a special one.
+ * Fortunately, it is not that complicated.*/
+
+struct cp_option {
+    char *key, *value;
+    int parent;
+};
+
+typedef struct cp_option cp_option;
+
+struct cp_options {
+    char *rawdata;
+    int len;
+    cp_option elems[];
+};
+
+typedef struct cp_options cp_options;
+
+static cp_options *cpo_init(int ne)
+{
+    cp_options *cfg = (cp_options *) calloc(1, sizeof (cp_options) + ne * sizeof (cp_option));
+    cfg->len = ne;
+    return cfg;
+}
+
+static void cpo_free(cp_options *cfg)
+{
+    if (!cfg) return;
+    free_pass(&cfg->rawdata);
+    free(cfg);
+}
+
+static int cpo_parse_elem(cp_options *cfg, char **input_ptr, int pidx, int *nextidx)
+{
+    char *nl = NULL, *strstart, *strend = NULL, *colon = NULL, *obrkt = NULL;
+    char *cbrkt = NULL, *key;
+    int idx, vlen, good, previdx;
+    struct cp_option *cfge;
+    char *input = *input_ptr;
+
+    colon = strchr(input, ':');
+    cbrkt = strchr(input, ')');
+    if (colon && cbrkt > colon) {
+        obrkt = strchr(colon, '(');
+        strstart = strstr(colon, "(\"");
+
+        if (strstart && strstart == obrkt) {
+            /* Adjust nl */
+            strend = strstr(colon, "\")");
+            nl = strend + 2;
+        } else {
+            cbrkt = strchr(colon, ')');
+            nl = strchr(colon, '\n');
+            if (nl < cbrkt) {
+                cbrkt = NULL;
+            }
+        }
+    } else {
+        colon = NULL;
+        /* After last element */
+        cbrkt = strchr(input, ')');
+        if (cbrkt)
+            nl = strchr(cbrkt, '\n');
+    }
+    if (!nl)
+        return 0;
+    nl[0] = 0;
+
+    *input_ptr = nl + 1;
+
+    idx = *nextidx;
+    cfge = cfg->elems + idx;
+    if (colon) {
+        (*nextidx)++;
+        key = colon + 1;
+        /* Save non-empty keys only */
+        if (key[0] != ' ') {
+            cfge->key = key;
+            key[obrkt - key - 1] = 0;
+        }
+
+        cfge->parent = pidx;
+        if (obrkt) {
+            if (cbrkt) {
+                /* Single element. Save value. */
+                cfge->value = obrkt + 1;
+                vlen = cbrkt - cfge->value;
+                cfge->value[vlen] = 0;
+
+                /* Drop quotes if string is quoted */
+                if (strstart && strend) {
+                    cfge->value[vlen - 1] = 0;
+                    cfge->value++;
+                }
+                return 1;
+            } else {
+                /* Container (list|map) */
+                previdx = *nextidx;
+                while ((good = cpo_parse_elem(cfg, input_ptr, idx, nextidx))&&(previdx<*nextidx))
+                    previdx = *nextidx;
+                return good;
+            }
+        }
+    } else {
+        if (cbrkt)
+            /* Container end */
+            return 1;
+    }
+    return 0;
+}
+
+static cp_options *cpo_parse(const char *input)
+{
+    char *key, *data = strdup(input);
+    size_t full_len = strlen(input);
+    const char *dataend = data + full_len - 1;
+
+    /* Count number of elements in input data which is equal to the amount
+     * of ':' characters in the input string.*/
+
+    char *next = data;
+    cp_options *cfg;
+    int nelem, nextidx, ok;
+    for (nelem = 0; (next = strchr(next, ':')); nelem++, next++);
+
+    cfg = cpo_init(nelem + 1);
+    cfg->rawdata = data;
+
+    next = data;
+    key = next + 1; /* Drop leading '(' */
+    cfg->elems[0].key = key;
+    next = strchr(key, '\n');
+    nextidx = 1;
+    ok = next != NULL;
+
+    /* Do recursive parsing */
+    if (ok) {
+        key[next - key] = 0;
+        next++;
+        while ((ok = cpo_parse_elem(cfg, &next, 0, &nextidx))&&(next < dataend));
+    }
+    if (!ok) {
+        cpo_free(cfg);
+        cfg = 0;
+    }
+    return cfg;
+}
+
+static int cpo_find_child(const cp_options *cfg, int pidx, const char *key)
+{
+    int elemidx = -1;
+    int ne = cfg->len;
+    if (pidx >= 0) {
+        for (int ie = pidx + 1; ie < ne; ie++) {
+            const cp_option *elem = &cfg->elems[ie];
+            if (elem->parent == pidx && elem->key && (0 == strcmp(key, elem->key))) {
+                elemidx = ie;
+                break;
+            }
+        }
+    }
+    return elemidx;
+}
+
+static int cpo_elem_iter(const cp_options *cfg, int iparent, int *i)
+{
+
+    int found = 0;
+    if (*i < 0)
+        *i = iparent;
+    else
+        ++(*i);
+
+    for (; *i < cfg->len; ++(*i)) {
+        const cp_option *nextelem = &cfg->elems[*i];
+        if (nextelem->parent == iparent) {
+            found = 1;
+            break;
+        }
+    }
+    return found;
+}
+
+static const cp_option *cpo_get(const cp_options *cfg, int i)
+{
+    return (i >= 0) ? &cfg->elems[i] : NULL;
+}
+
+static int cpo_get_index(const cp_options *cfg, const cp_option *opt)
+{
+    return opt - cfg->elems;
+}
+
 static int snx_start_tunnel(struct openconnect_info *vpninfo)
 {
     /* No-op */
