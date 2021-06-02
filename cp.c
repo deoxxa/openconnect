@@ -623,6 +623,38 @@ static int https_request_wrapper(struct openconnect_info *vpninfo, struct oc_tex
     return result;
 }
 
+static const cp_option *get_from_rd(const cp_options *cpo, const char *key)
+{
+    int rd_idx = cpo_find_child(cpo, 0, "ResponseData");
+    return cpo_get(cpo, cpo_find_child(cpo, rd_idx, key));
+}
+
+static int ccc_check_error(const cp_options *cpo, struct oc_text_buf *s)
+{
+    const cp_option *return_code, *error_code, *error_message, *error_msg = NULL;
+    char *msg = NULL;
+    int ret = 0;
+    int rh_idx = cpo_find_child(cpo, 0, "ResponseHeader");
+    error_code = get_from_rd(cpo, "error_code");
+    return_code = cpo_get(cpo, cpo_find_child(cpo, rh_idx, "return_code"));
+
+    if (atoi(return_code->value) != 600 || error_code) {
+        error_message = get_from_rd(cpo, "error_message");
+        if (error_message)
+            msg = decode(error_message->value);
+        else {
+            error_msg = get_from_rd(cpo, "error_msg");
+            if (error_msg)
+                msg = error_msg->value;
+        }
+        buf_append(s, "%s (code %s)", msg ? msg : "", error_code ? error_code->value : return_code->value);
+        ret = 1;
+    }
+    if (!error_msg)
+        free(msg);
+    return ret;
+}
+
 static int send_client_hello_command(struct openconnect_info *vpninfo)
 {
 
