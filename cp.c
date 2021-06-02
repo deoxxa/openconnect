@@ -38,6 +38,20 @@ enum PACKET_TYPE {
     IP
 };
 
+/* SLIM protocol commands */
+static const char client_hello[] = "(client_hello\n\
+        :client_version (%d)\n\
+        :protocol_version (%d)\n\
+        :OM (\n\
+                :ipaddr (%s)\n\
+                :keep_address (%s)\n\
+        )\n\
+        :optional (\n\
+                :client_type (4)\n\
+        )\n\
+        :cookie (%s)\n\
+)";
+
 static const char keepalive[] = "(keepalive\n\
         :id (0)\n\
 )";
@@ -213,6 +227,23 @@ static int send_KA(struct openconnect_info *vpninfo, int sync)
 static int send_disconnect(struct openconnect_info *vpninfo)
 {
     return snx_send_command(vpninfo, disconnect, 1);
+}
+/* NOTE: IPv4 versions */
+static uint32_t strtoipv4(const char *ip)
+{
+    uint32_t ret = 0;
+    struct in_addr buf;
+    if (inet_pton(AF_INET, ip, &buf) == 1) {
+        ret = ntohl(buf.s_addr);
+    }
+    return ret;
+}
+
+static char* ipv4tostr(uint32_t ip_int)
+{
+    static char ret[INET_ADDRSTRLEN] = {0};
+    int32_t buf = htonl(ip_int);
+    return inet_ntop(AF_INET, &buf, ret, INET_ADDRSTRLEN) ? ret : NULL;
 }
 
 /* Authentication-related helpers. */
@@ -539,10 +570,237 @@ static const char *set_option(struct openconnect_info *vpninfo, const char *key,
     return opt->value;
 }
 
+static void check_set_str(char **from, const char *to)
+{
+    char *fptr = *from;
+    if (fptr == to)
+        return;
+
+    if (fptr && to && 0 == strcmp(fptr, to))
+        return;
+
+    free(fptr);
+    *from = NULL;
+    if (to)
+        *from = strdup(to);
+}
+
+static void switch_to(struct openconnect_info *vpninfo, const char*host, int port,
+        const char*path)
+{
+    const char *urlpath = path ? path : get_option(vpninfo, "org_urlpath");
+    check_set_str(&vpninfo->hostname, host ? host : get_option(vpninfo, "org_hostname"));
+    check_set_str(&vpninfo->urlpath, urlpath);
+    vpninfo->port = (port > 0) ? port : atoi(get_option(vpninfo, "org_port"));
+}
+
+static int send_client_hello_command(struct openconnect_info *vpninfo)
+{
+
+    int ret, reconnect = vpninfo->ip_info.addr != NULL;
+    char *request_body = NULL;
+    int proto_ver = 1;
+    int client_ver = 1;
+    const char *cookie = get_option(vpninfo, "slim_cookie");
+
+    if (asprintf(&request_body, client_hello, client_ver, proto_ver,
+            (reconnect ? vpninfo->ip_info.addr : "0.0.0.0"),
+            (reconnect ? "true" : "false"), cookie) < 0)
+        return -ENOMEM;
+
+    ret = snx_send_command(vpninfo, request_body, 1);
+    free(request_body);
+    return ret;
+}
+
+static int gen_ranges(struct openconnect_info *vpninfo, uint32_t ip_min,
+        uint32_t ip_max, struct oc_text_buf *s)
+{
+
+    uint32_t ip = ip_min, imask, ip_low, ip_high;
+    while (ip <= ip_max) {
+        struct oc_split_include *inc;
+        /* make mask that covers current ip range, but does not exceed it. */
+        uint32_t mask = 0;
+        for (imask = 0; imask < 32; imask++) {
+            uint32_t curbit = 1 << imask;
+            mask |= curbit;
+            ip_low = ip & (~mask);
+            ip_high = ip_low | mask;
+            if (ip_low < ip || ip_high > ip_max) {
+                mask &= ~curbit;
+                break;
+            }
+        }
+        buf_truncate(s);
+        buf_append(s, "%s/%d", ipv4tostr(ip), 32 - imask);
+
+        inc = malloc(sizeof (*inc));
+        if (!inc)
+            return 0;
+
+        inc->route = add_option(vpninfo, "split-include", s->data);
+        if (!inc->route)
+            return 0;
+
+        inc->next = vpninfo->ip_info.split_includes;
+        vpninfo->ip_info.split_includes = inc;
+        ip += mask + 1;
+    }
+    return 1;
+}
+
+static int handle_ip_ranges(struct openconnect_info *vpninfo, const cp_options *cpo, int range_idx)
+{
+    int ret = 1, ichild = -1;
+    const cp_option*from_elem, *to_elem;
+    struct oc_text_buf*s = buf_alloc();
+    uint32_t from_ip_int, to_ip_int, gw_ip_int = strtoipv4(vpninfo->ip_info.gateway_addr);
+
+    while (cpo_elem_iter(cpo, range_idx, &ichild)) {
+
+        from_elem = cpo_get(cpo, cpo_find_child(cpo, ichild, "from"));
+        to_elem = cpo_get(cpo, cpo_find_child(cpo, ichild, "to"));
+        vpn_progress(vpninfo, PRG_DEBUG, _("Received IP address range %s:%s\n"),
+                from_elem->value, to_elem->value);
+
+        from_ip_int = strtoipv4(from_elem->value);
+        to_ip_int = strtoipv4(to_elem->value);
+
+        if (from_ip_int == gw_ip_int)
+            continue;
+
+        if (!gen_ranges(vpninfo, from_ip_int, to_ip_int, s)) {
+            ret = 0;
+            break;
+        }
+    }
+    buf_free(s);
+    return ret;
+}
+
+static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo)
+{
+    int ichild = -1;
+    int i, ret = 1, idx, OM_idx, range_idx;
+    const cp_option *opt;
+    cp_options *cpo = cpo_parse(data);
+
+    if (!cpo) return 0;
+    opt = cpo->elems;
+    if (opt->key && strstr(opt->key, "hello_reply")) {
+
+        /* Save versions, just in case */
+        opt = cpo_get(cpo, cpo_find_child(cpo, 0, "version"));
+        set_option(vpninfo, "slim_ver", opt->value);
+        opt = cpo_get(cpo, cpo_find_child(cpo, 0, "protocol_version"));
+        set_option(vpninfo, "slim_proto_ver", opt->value);
+
+        /* Timeouts setup */
+        idx = cpo_find_child(cpo, 0, "timeouts");
+        opt = cpo_get(cpo, cpo_find_child(cpo, idx, "keepalive"));
+        vpninfo->ssl_times.keepalive = MAX(10, atoi(opt->value));
+        opt = cpo_get(cpo, cpo_find_child(cpo, idx, "authentication"));
+        vpninfo->auth_expiration = time(NULL) + MAX(3600, atoi(opt->value));
+
+        /* IP, NS, routing info */
+        OM_idx = idx = cpo_find_child(cpo, 0, "OM");
+        opt = cpo_get(cpo, cpo_find_child(cpo, idx, "ipaddr"));
+        /* Check that ip is the same on reconnect.*/
+        if (vpninfo->ip_info.addr && strcmp(vpninfo->ip_info.addr, opt->value)) {
+            ret = 0;
+            vpn_progress(vpninfo, PRG_ERR, _("Received different internal IP address %s (was %s)\n"),
+                    opt->value, vpninfo->ip_info.addr);
+        } else {
+            vpninfo->ip_info.addr = set_option(vpninfo, "ipaddr", opt->value);
+            vpn_progress(vpninfo, PRG_DEBUG, _("Received internal IP address %s\n"), opt->value);
+
+            idx = cpo_find_child(cpo, OM_idx, "dns_servers");
+            if (idx >= 0) {
+                i = 0;
+                while ((i < 3) && cpo_elem_iter(cpo, idx, &ichild)) {
+                    opt = cpo_get(cpo, ichild);
+                    vpn_progress(vpninfo, PRG_DEBUG, _("Received DNS server %s\n"), opt->value);
+                    vpninfo->ip_info.dns[i++] = add_option(vpninfo, "dns_srv", opt->value);
+                }
+            }
+
+            opt = cpo_get(cpo, cpo_find_child(cpo, OM_idx, "dns_suffix"));
+            if (opt->value && strlen(opt->value))
+                vpninfo->ip_info.domain = add_option(vpninfo, "dns_suff", opt->value);
+
+            idx = cpo_find_child(cpo, OM_idx, "wins_servers");
+            if (idx >= 0) {
+                i = 0;
+                ichild = -1;
+                while ((i < 3) && cpo_elem_iter(cpo, idx, &ichild)) {
+                    opt = cpo_get(cpo, ichild);
+                    vpn_progress(vpninfo, PRG_DEBUG, _("Received WINS server %s\n"), opt->value);
+                    vpninfo->ip_info.nbns[i++] = add_option(vpninfo, "wins_srv", opt->value);
+                }
+            }
+            /* Note: optional.subnet not used. */
+
+            range_idx = cpo_find_child(cpo, 0, "range");
+            if (range_idx >= 0)
+                ret = handle_ip_ranges(vpninfo, cpo, range_idx);
+        }
+    }
+    cpo_free(cpo);
+    return ret;
+}
+
 static int snx_start_tunnel(struct openconnect_info *vpninfo)
 {
-    /* No-op */
-    return -1;
+    int result, ptype;
+
+    /* Try to open connection and send hello */
+    switch_to(vpninfo, NULL, atoi(get_option(vpninfo, "ssl_port")), NULL);
+
+    if (openconnect_open_https(vpninfo)) {
+        vpninfo->quit_reason = "Failed to open HTTPS connection.";
+        openconnect_close_https(vpninfo, 0);
+        return -EIO;
+    }
+
+    result = send_client_hello_command(vpninfo);
+    if (result < 0) {
+        vpninfo->quit_reason = "Failed to send client_hello.";
+        openconnect_close_https(vpninfo, 0);
+        return -EIO;
+    }
+
+    /* Process hello reply */
+    ptype = -1;
+    snx_receive(vpninfo, &ptype, 1);
+
+    if (ptype != CMD) {
+        FREE(vpninfo->cstp_pkt);
+        vpninfo->quit_reason = "Received packet with wrong type.";
+        openconnect_close_https(vpninfo, 0);
+        return -EIO;
+    }
+
+    result = handle_hello_reply((char*) vpninfo->cstp_pkt->data, vpninfo);
+    FREE(vpninfo->cstp_pkt);
+
+    if (!result) {
+        vpninfo->quit_reason = "Error while processing hello_reply.";
+        openconnect_close_https(vpninfo, 0);
+        return -EIO;
+    }
+
+    if (send_KA(vpninfo, 1) < 0) {
+        vpninfo->quit_reason = "Failed to send initial KA.";
+        return -EIO;
+    }
+
+    vpninfo->ssl_times.last_rekey = vpninfo->ssl_times.last_rx = vpninfo->ssl_times.last_tx = time(NULL);
+
+    monitor_fd_new(vpninfo, ssl);
+    monitor_read_fd(vpninfo, ssl);
+    monitor_except_fd(vpninfo, ssl);
+    return 0;
 }
 
 static int do_reconnect(struct openconnect_info *vpninfo)
