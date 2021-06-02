@@ -38,6 +38,24 @@ enum PACKET_TYPE {
     IP
 };
 
+static char clients_str[] = "clients/";
+
+static const char CCCclientRequestClientHello[] = "(CCCclientRequest\n\
+\t\t:RequestHeader (\n\
+\t\t\t\t:id (1)\n\
+\t\t\t\t:session_id ()\n\
+\t\t\t\t:type (ClientHello)\n\
+\t\t\t\t:protocol_version (100)\n\
+\t\t)\n\
+\t\t:RequestData (\n\
+\t\t\t\t:client_info (\n\
+\t\t\t\t:client_type (TRAC)\n\
+\t\t\t\t:client_version (%d)\n\
+\t\t\t\t:gw_ip (%s)\n\
+\t\t\t\t)\n\
+\t\t)\n\
+)";
+
 /* SLIM protocol commands */
 static const char client_hello[] = "(client_hello\n\
         :client_version (%d)\n\
@@ -653,6 +671,94 @@ static int ccc_check_error(const cp_options *cpo, struct oc_text_buf *s)
     if (!error_msg)
         free(msg);
     return ret;
+}
+
+static int do_ccc_client_hello(struct openconnect_info *vpninfo)
+{
+    static char pv[] = "protocol_version";
+    int result, idx, idx2 = -1, ichild = -1;
+    char *resp_buf = NULL;
+    struct oc_text_buf *buf = buf_alloc();
+    cp_options *cpo = NULL;
+    const cp_option *opt = NULL;
+
+    /* Open connection here to use gateway_addr */
+    result = connect_https_socket(vpninfo);
+    if (result < 0)
+        return result;
+    char *gw = vpninfo->ip_info.gateway_addr;
+
+    /* NOTE: client version fixed for now. */
+    buf_append(buf, CCCclientRequestClientHello, 0, gw ? gw : "");
+
+    result = https_request_wrapper(vpninfo, buf, &resp_buf, 0);
+    if (result > 0) {
+        cpo = cpo_parse(resp_buf);
+        if (cpo) {
+            buf_truncate(buf);
+            if (ccc_check_error(cpo, buf)) {
+                vpn_progress(vpninfo, PRG_ERR, _("Server returned error: '%s'\n"), buf->data);
+                result = -EIO;
+            } else {
+                /* Extract usefull info */
+
+                opt = get_from_rd(cpo, pv);
+                idx = cpo_get_index(cpo, opt);
+                opt = cpo_get(cpo, cpo_find_child(cpo, idx, pv));
+                set_option(vpninfo, pv, opt->value);
+
+                set_option(vpninfo, "ssl_port", get_option(vpninfo, "org_port"));
+                opt = get_from_rd(cpo, "connectivity_info");
+                idx = cpo_get_index(cpo, opt);
+                while (cpo_elem_iter(cpo, idx, &ichild)) {
+                    opt = cpo_get(cpo, ichild);
+                    if (!opt->key)
+                        continue;
+                    if (!strcmp(opt->key, "connect_with_certificate_url"))
+                        set_option(vpninfo, "cert_url", opt->value);
+                    else if (!strcmp(opt->key, "cookie_name"))
+                        set_option(vpninfo, "ma_cookie_name", opt->value);
+                    else if (!strcmp(opt->key, "supported_data_tunnel_protocols"))
+                        idx2 = cpo_get_index(cpo, opt);
+                }
+                if (idx2 > 0) {
+                    ichild = -1;
+                    buf_truncate(buf);
+                    while (cpo_elem_iter(cpo, idx2, &ichild)) {
+                        opt = cpo_get(cpo, ichild);
+                        buf_append(buf, "%s ", opt->value);
+                    }
+                    set_option(vpninfo, "tunnel_protocols", buf->data);
+                }
+            }
+        } else
+            result = -EIO;
+        cpo_free(cpo);
+    }
+    buf_free(buf);
+    free(resp_buf);
+    if (result <= 0)
+        vpninfo->quit_reason = "ClientHello request error";
+    return result;
+}
+
+static int get_gw_info(struct openconnect_info *vpninfo)
+{
+
+    char sport[6] = {};
+    int result = 1;
+
+    if (!get_option(vpninfo, "org_hostname")) {
+        set_option(vpninfo, "org_hostname", vpninfo->hostname);
+        snprintf(sport, sizeof (sport), "%d", vpninfo->port);
+        set_option(vpninfo, "org_port", sport);
+        set_option(vpninfo, "org_urlpath", vpninfo->urlpath);
+    }
+
+    switch_to(vpninfo, NULL, -1, clients_str);
+
+    result = do_ccc_client_hello(vpninfo);
+    return result;
 }
 
 static int send_client_hello_command(struct openconnect_info *vpninfo)
