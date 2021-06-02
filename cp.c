@@ -32,6 +32,7 @@
 #include "openconnect-internal.h"
 
 #define FREE(ptr) do{free(ptr);ptr=NULL;}while(0)
+#define FREE_PASS(ptr) do{free_pass(&ptr);}while(0)
 
 enum PACKET_TYPE {
     CMD = 1,
@@ -1001,7 +1002,36 @@ int cp_obtain_cookie(struct openconnect_info *vpninfo)
 
 int cp_connect(struct openconnect_info *vpninfo)
 {
-    return 0;
+    char *tmp, *sid;
+    int result = 1;
+
+    if (!vpninfo->cookie || !strlen(vpninfo->cookie))
+        return 1;
+
+    vpninfo->ip_info.mtu = 1500; /* Fixed 4 now */
+
+    result = get_gw_info(vpninfo);
+    if (result < 0) {
+        return result;
+    }
+
+    /* Standard SNX cookie string: <cookie>:<sid> */
+    tmp = strstr(vpninfo->cookie, ":");
+    if (!tmp) {
+        return 1;
+    }
+    tmp[0] = 0;
+    set_option(vpninfo, "slim_cookie", vpninfo->cookie);
+
+    sid = tmp + 1;
+    tmp = strstr(sid, ":");
+    if (tmp) {
+        tmp[0] = 0;
+    }
+    set_option(vpninfo, "session_id", sid);
+    FREE_PASS(vpninfo->cookie);
+    return snx_start_tunnel(vpninfo);
+
 }
 
 int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
