@@ -594,6 +594,35 @@ static void switch_to(struct openconnect_info *vpninfo, const char*host, int por
     vpninfo->port = (port > 0) ? port : atoi(get_option(vpninfo, "org_port"));
 }
 
+static int https_request_wrapper(struct openconnect_info *vpninfo, struct oc_text_buf *request_body,
+        char **resp_buf, int rdrfetch)
+{
+    int result;
+    int no_http_keepalive = vpninfo->no_http_keepalive;
+    int dump_http_traffic = vpninfo->dump_http_traffic;
+    const char *method = request_body ? "POST" : "GET";
+    const char *req_type = request_body ? "application/x-www-form-urlencoded" : NULL;
+
+    if (request_body && vpninfo->verbose >= PRG_DEBUG) {
+        char*cmd_print = hide_auth_data(request_body->data);
+        vpn_progress(vpninfo, PRG_DEBUG, _("HTTP post data:\n%s\n"), cmd_print);
+        free(cmd_print);
+    }
+
+    vpninfo->no_http_keepalive = 1; /* Force connection close */
+    vpninfo->dump_http_traffic = 0; /* Do not print sensitive info */
+
+    result = do_https_request(vpninfo, method, req_type, request_body, resp_buf, rdrfetch);
+    if (*resp_buf && vpninfo->verbose >= PRG_DEBUG) {
+        char *cmd_print = hide_auth_data(*resp_buf);
+        vpn_progress(vpninfo, PRG_DEBUG, _("HTTP response data:\n%s\n"), cmd_print);
+        free(cmd_print);
+    }
+    vpninfo->dump_http_traffic = dump_http_traffic;
+    vpninfo->no_http_keepalive = no_http_keepalive;
+    return result;
+}
+
 static int send_client_hello_command(struct openconnect_info *vpninfo)
 {
 
