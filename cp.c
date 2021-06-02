@@ -1228,6 +1228,12 @@ static int snx_handle_command(struct openconnect_info *vpninfo)
     int ret = 0;
 
     if (strstr(data, "disconnect")) {
+        cp_options *cpo = cpo_parse(data);
+        const cp_option *msg = cpo_get(cpo, cpo_find_child(cpo, 0, "message"));
+        if (msg) {
+            vpn_progress(vpninfo, PRG_INFO, _("Server disconnect message: %s\n"), msg->value);
+        }
+        cpo_free(cpo);
         vpninfo->quit_reason = "Disconnect on server request";
         ret = 1;
     }
