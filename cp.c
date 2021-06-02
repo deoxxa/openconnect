@@ -785,9 +785,10 @@ static int get_gw_info(struct openconnect_info *vpninfo)
         set_option(vpninfo, "org_urlpath", vpninfo->urlpath);
     }
 
-    switch_to(vpninfo, NULL, -1, clients_str);
-
-    result = do_ccc_client_hello(vpninfo);
+    if (!find_option(vpninfo, "protocol_version")) {
+        switch_to(vpninfo, NULL, -1, clients_str);
+        result = do_ccc_client_hello(vpninfo);
+    }
     return result;
 }
 
