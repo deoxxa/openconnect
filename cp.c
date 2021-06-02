@@ -86,6 +86,16 @@ static const char CCCclientRequestCert[] = "(CCCclientRequest\n\
 \t\t)\n\
 )";
 
+static const char CCCclientRequestSignout[] = "(CCCclientRequest\n\
+	:RequestHeader (\n\
+		:id (0)\n\
+		:type (Signout)\n\
+		:session_id (%s)\n\
+		:protocol_version (100)\n\
+	)\n\
+	:RequestData ()\n\
+)\n";
+
 /* SLIM protocol commands */
 static const char client_hello[] = "(client_hello\n\
         :client_version (%d)\n\
@@ -1359,9 +1369,19 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 
 int cp_bye(struct openconnect_info *vpninfo, const char *reason)
 {
+    struct oc_text_buf *request_body = buf_alloc();
+    char *data = NULL;
     if (vpninfo->ssl_fd != -1) {
         send_disconnect(vpninfo);
         openconnect_close_https(vpninfo, 0);
+
+        if (atoi(get_option(vpninfo, "protocol_version")) >= 100) {
+            switch_to(vpninfo, NULL, -1, clients_str);
+            buf_append(request_body, CCCclientRequestSignout, get_option(vpninfo, "session_id"));
+            https_request_wrapper(vpninfo, request_body, &data, 0);
+        }
     }
+    free(data);
+    buf_free(request_body);
     return 0;
 }
