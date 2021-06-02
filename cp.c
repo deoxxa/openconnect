@@ -41,6 +41,8 @@ enum PACKET_TYPE {
 
 static char clients_str[] = "clients/";
 
+/* CCC protocol commands */
+
 static const char CCCclientRequestClientHello[] = "(CCCclientRequest\n\
 \t\t:RequestHeader (\n\
 \t\t\t\t:id (1)\n\
@@ -54,6 +56,33 @@ static const char CCCclientRequestClientHello[] = "(CCCclientRequest\n\
 \t\t\t\t:client_version (%d)\n\
 \t\t\t\t:gw_ip (%s)\n\
 \t\t\t\t)\n\
+\t\t)\n\
+)";
+
+static const char client_type_trac[] = "TRAC";
+static const char client_type_mobile[] = "SYMBIAN";
+
+static const char CCCclientRequestUserPass[] = "(CCCclientRequest\n\
+\t\t:RequestHeader (\n\
+\t\t\t\t:id (2)\n\
+\t\t\t\t:type (UserPass)\n\
+\t\t\t\t:session_id ()\n\
+\t\t)\n\
+\t\t:RequestData (\n\
+\t\t\t:client_type (%s)\n\
+\t\t\t\t:username (%s)\n\
+\t\t\t\t:password (%s)\n\
+\t\t)\n\
+)";
+
+static const char CCCclientRequestCert[] = "(CCCclientRequest\n\
+\t\t:RequestHeader (\n\
+\t\t\t\t:id (1)\n\
+\t\t\t\t:type (CertAuth)\n\
+\t\t\t\t:session_id ()\n\
+\t\t)\n\
+\t\t:RequestData (\n\
+\t\t\t:client_type (TRAC)\n\
 \t\t)\n\
 )";
 
@@ -781,6 +810,217 @@ static int send_client_hello_command(struct openconnect_info *vpninfo)
     return ret;
 }
 
+static int get_user_creds(struct openconnect_info *vpninfo)
+{
+    int ret;
+    char *user = NULL, *pwd = NULL, *userhash = NULL, *pwdhash = NULL;
+    char lt;
+
+    struct oc_auth_form mainform;
+    struct oc_form_opt_select ltselect;
+
+    struct oc_choice ltvar[] = {
+        {.label = _("Username and password"), .name = (char*) "u"},
+        {.label = _("PinPad (SecurID)"), .name = (char*) "p"},
+        {.label = _("KeyFob (SecurID)"), .name = (char*) "k"},
+        {.label = _("Challenge Response"), .name = (char*) "c"},
+    };
+
+    struct oc_choice * oscptrs[] = {ltvar, ltvar + 1, ltvar + 2, ltvar + 3};
+
+    struct oc_form_opt opts[] = {
+        {.type = OC_FORM_OPT_TEXT, .name = (char *) "username", .label = _("Username:")},
+        {.type = OC_FORM_OPT_PASSWORD, .name = (char *) "password", .label = _("Password:")},
+        {.type = OC_FORM_OPT_PASSWORD, .name = (char *) "passcode", .label = _("Passcode:")},
+        {.type = OC_FORM_OPT_PASSWORD, .name = (char *) "tokencode", .label = _("Tokencode:")},
+        {.type = OC_FORM_OPT_PASSWORD, .name = (char *) "pin", .label = _("PIN:")},
+        {.type = OC_FORM_OPT_TEXT, .name = (char *) "challenge", .label = _("Challenge response:")},
+
+    };
+    struct oc_form_opt *username, *password, *passcode, *pin, *tokencode, *challenge;
+
+    int i = 0;
+    username = &opts[i++];
+    password = &opts[i++];
+    passcode = &opts[i++]; /* pinpad */
+    pin = &opts[i++]; /*  keyfob */
+    tokencode = &opts[i++]; /* keyfob */
+    challenge = &opts[i++];
+
+    memset(&ltselect, 0, sizeof (ltselect));
+    memset(&mainform, 0, sizeof (mainform));
+
+    mainform.auth_id = (char *) "cp_login_opts";
+    mainform.opts = &ltselect.form;
+    mainform.authgroup_opt = &ltselect;
+    mainform.authgroup_selection = 0;
+    mainform.message = _("CheckPoint login options:");
+
+    ltselect.form.next = NULL;
+    ltselect.form.type = OC_FORM_OPT_SELECT;
+    ltselect.form.name = (char *) "login_type";
+    ltselect.form.label = (char *) _("Login type:");
+
+    ltselect.nr_choices = sizeof (oscptrs) / sizeof (*oscptrs);
+    ltselect.choices = oscptrs;
+
+    do {
+        ret = process_auth_form(vpninfo, &mainform);
+    } while (ret == OC_FORM_RESULT_NEWGROUP);
+
+    if (OC_FORM_RESULT_OK != ret) {
+        return 0; /* Cancel login */
+    }
+
+    lt = ltselect.form._value[0];
+
+    memset(&mainform, 0, sizeof (mainform));
+
+    mainform.opts = username;
+
+    if (lt == 'u')
+        username->next = password;
+    else if (lt == 'p')
+        username->next = passcode;
+    else if (lt == 'k') {
+        username->next = pin;
+        pin->next = tokencode;
+    } else if (lt == 'c')
+        mainform.opts = challenge;
+    else
+        return 0;
+
+
+    mainform.auth_id = (char *) ("cp_creds");
+    mainform.message = _("Enter user credentials:");
+
+    ret = process_auth_form(vpninfo, &mainform);
+    if (OC_FORM_RESULT_OK != ret) {
+        return 0;
+    }
+
+    user = username->_value;
+    if (lt == 'u')
+        pwd = strdup(password->_value);
+    else if (lt == 'p')
+        pwd = strdup(passcode->_value);
+    else if (lt == 'k') {
+        char *spin = pin->_value;
+        char *stoken = tokencode->_value;
+        int lenpin = strlen(spin);
+        int lentok = strlen(stoken);
+        pwd = calloc(1, lenpin + lentok + 1);
+        strncpy(pwd, spin, lenpin);
+        strncpy(pwd + lenpin, stoken, lentok);
+    } else if (lt == 'c') {
+        user = challenge->_value;
+        pwd = strdup("");
+    }
+
+    if (lt != 'm') {
+        userhash = encode(user);
+        pwdhash = encode(pwd);
+        add_option(vpninfo, "username", userhash);
+        add_option(vpninfo, "password", pwdhash);
+    }
+
+    for (i = 0; i < sizeof (opts) / sizeof (*opts); i++)
+        free_pass(&opts[i]._value);
+
+    free_pass(&userhash);
+    free_pass(&pwdhash);
+    free_pass(&pwd);
+    return 1;
+}
+
+static int handle_login_reply(const char*data, struct openconnect_info *vpninfo)
+{
+    int ret = 0;
+    struct oc_text_buf *error = buf_alloc();
+    cp_options *cpo = cpo_parse(data);
+
+    if (!cpo) {
+        vpn_progress(vpninfo, PRG_ERR, _("Failed to parse login reply!\n"));
+    } else {
+        const struct cp_option *authn_status = get_from_rd(cpo, "authn_status");
+        const struct cp_option *is_authenticated = get_from_rd(cpo, "is_authenticated");
+        const struct cp_option *active_key = get_from_rd(cpo, "active_key");
+        const struct cp_option *session_id = get_from_rd(cpo, "session_id");
+
+        if (ccc_check_error(cpo, error))
+            vpn_progress(vpninfo, PRG_ERR, _("Received error during authentication: %s\n"), error->data);
+        else {
+            if (authn_status && (!strcmp(authn_status->value, "done") &&
+                    is_authenticated && (!strcmp(is_authenticated->value, "true")))) {
+                char *slim_cookie = decode(active_key->value);
+                set_option(vpninfo, "slim_cookie", slim_cookie);
+                set_option(vpninfo, "session_id", session_id->value);
+                FREE_PASS(slim_cookie);
+                ret = 1;
+            } else
+                vpn_progress(vpninfo, PRG_ERR, _("Unknown authentication error\n"));
+        }
+    }
+    cpo_free(cpo);
+    buf_free(error);
+    return ret;
+}
+
+static int do_get_cookie(struct openconnect_info *vpninfo)
+{
+    const char *user_hash = NULL, *pwd_hash = NULL, *urlpath = NULL;
+    char *resp_buf = NULL;
+    struct oc_text_buf *request_body = buf_alloc();
+    int result = get_gw_info(vpninfo);
+
+    if (vpninfo->cookie) {
+        FREE_PASS(vpninfo->cookie);
+    }
+
+    if (result > 0) {
+        int pv = atoi(get_option(vpninfo, "protocol_version"));
+        if (vpninfo->certinfo[0].cert) {
+            if (pv >= 100)
+                urlpath = get_option(vpninfo, "cert_url");
+            else
+                urlpath = "clients/cert";
+            buf_append(request_body, CCCclientRequestCert);
+        } else {
+            result = get_user_creds(vpninfo);
+            user_hash=get_option(vpninfo, "username");
+            pwd_hash=get_option(vpninfo, "password");
+            urlpath = clients_str;
+            if (result > 0)
+                buf_append(request_body, CCCclientRequestUserPass, client_type_trac,
+                        user_hash, pwd_hash);
+        }
+
+        if (request_body->pos) {
+            if (result) {
+                switch_to(vpninfo, NULL, -1, urlpath);
+                result = https_request_wrapper(vpninfo, request_body, &resp_buf, 0);
+            }
+            if (result > 0)
+                result = handle_login_reply(resp_buf, vpninfo);
+        }
+    }
+    buf_free(request_body);
+    FREE_PASS(resp_buf);
+
+    if (result > 0) {
+        if (!vpninfo->cookie) {
+            request_body = buf_alloc();
+            buf_append(request_body, "%s:%s", get_option(vpninfo, "slim_cookie"),
+                    get_option(vpninfo, "session_id"));
+            vpninfo->cookie = strdup(request_body->data);
+            buf_free(request_body);
+        }
+    } else
+        FREE_PASS(vpninfo->cookie);
+
+    return result;
+}
+
 static int gen_ranges(struct openconnect_info *vpninfo, uint32_t ip_min,
         uint32_t ip_max, struct oc_text_buf *s)
 {
@@ -996,8 +1236,15 @@ static int snx_handle_command(struct openconnect_info *vpninfo)
 
 int cp_obtain_cookie(struct openconnect_info *vpninfo)
 {
-    vpn_progress(vpninfo, PRG_ERR, "CP authentication not yet implemented\n");
-    return -EOPNOTSUPP;
+
+    int ret;
+    do {
+        ret = do_get_cookie(vpninfo);
+        if (ret <= 0)
+            break;
+    } while (!vpninfo->cookie);
+
+    return ret <= 0;
 }
 
 int cp_connect(struct openconnect_info *vpninfo)
