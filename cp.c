@@ -39,7 +39,7 @@ enum PACKET_TYPE {
     DATA
 };
 
-static char clients_str[] = "clients/";
+static char clients_str[] = "/clients/";
 
 /* CCC protocol commands */
 
@@ -630,29 +630,6 @@ static const char *set_option(struct openconnect_info *vpninfo, const char *key,
     return opt->value;
 }
 
-static void check_set_str(char **from, const char *to)
-{
-    char *fptr = *from;
-    if (fptr == to)
-        return;
-
-    if (fptr && to && 0 == strcmp(fptr, to))
-        return;
-
-    free(fptr);
-    *from = NULL;
-    if (to)
-        *from = strdup(to);
-}
-
-static void switch_to(struct openconnect_info *vpninfo, const char*host, int port,
-        const char*path)
-{
-    const char *urlpath = path ? path : get_option(vpninfo, "org_urlpath");
-    check_set_str(&vpninfo->hostname, host ? host : get_option(vpninfo, "org_hostname"));
-    check_set_str(&vpninfo->urlpath, urlpath);
-    vpninfo->port = (port > 0) ? port : atoi(get_option(vpninfo, "org_port"));
-}
 
 static int https_request_wrapper(struct openconnect_info *vpninfo, struct oc_text_buf *request_body,
         char **resp_buf, int rdrfetch)
@@ -795,8 +772,11 @@ static int get_gw_info(struct openconnect_info *vpninfo)
     }
 
     if (!find_option(vpninfo, "protocol_version")) {
-        switch_to(vpninfo, NULL, -1, clients_str);
-        result = do_ccc_client_hello(vpninfo);
+        vpninfo->redirect_url = strdup(clients_str);
+        if (handle_redirect(vpninfo) >= 0)
+            result = do_ccc_client_hello(vpninfo);
+        else
+            result = 0;
     }
     return result;
 }
@@ -993,7 +973,7 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
             if (pv >= 100)
                 urlpath = get_option(vpninfo, "cert_url");
             else
-                urlpath = "clients/cert";
+                urlpath = "/clients/cert";
             buf_append(request_body, CCCclientRequestCert);
         } else {
             result = get_user_creds(vpninfo);
@@ -1007,8 +987,11 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
 
         if (request_body->pos) {
             if (result) {
-                switch_to(vpninfo, NULL, -1, urlpath);
-                result = https_request_wrapper(vpninfo, request_body, &resp_buf, 0);
+                vpninfo->redirect_url = strdup(urlpath);
+                if (handle_redirect(vpninfo) >= 0)
+                    result = https_request_wrapper(vpninfo, request_body, &resp_buf, 0);
+                else
+                    result = 0;
             }
             if (result > 0)
                 result = handle_login_reply(resp_buf, vpninfo);
@@ -1176,7 +1159,9 @@ static int snx_start_tunnel(struct openconnect_info *vpninfo)
     openconnect_close_https(vpninfo, 0);
 
     /* Try to open connection and send hello */
-    switch_to(vpninfo, NULL, atoi(get_option(vpninfo, "ssl_port")), NULL);
+    vpninfo->redirect_url = strdup("/");
+    if (handle_redirect(vpninfo) < 0)
+        return -EIO;
 
     if (openconnect_open_https(vpninfo)) {
         vpninfo->quit_reason = "Failed to open HTTPS connection.";
@@ -1378,9 +1363,12 @@ int cp_bye(struct openconnect_info *vpninfo, const char *reason)
         openconnect_close_https(vpninfo, 0);
 
         if (atoi(get_option(vpninfo, "protocol_version")) >= 100) {
-            switch_to(vpninfo, NULL, -1, clients_str);
-            buf_append(request_body, CCCclientRequestSignout, get_option(vpninfo, "session_id"));
-            https_request_wrapper(vpninfo, request_body, &data, 0);
+
+            vpninfo->redirect_url = strdup(clients_str);
+            if (handle_redirect(vpninfo) >= 0) {
+                buf_append(request_body, CCCclientRequestSignout, get_option(vpninfo, "session_id"));
+                https_request_wrapper(vpninfo, request_body, &data, 0);
+            }
         }
     }
     free(data);
