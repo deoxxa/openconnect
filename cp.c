@@ -512,6 +512,8 @@ static int cpo_parse_elem(cp_options *cfg, char **input_ptr, int pidx, int *next
 
 static cp_options *cpo_parse(const char *input)
 {
+    if(!input)
+        return NULL;
     char *key, *data = strdup(input);
     size_t full_len = strlen(input);
     const char *dataend = data + full_len - 1;
@@ -1059,8 +1061,10 @@ static int gen_ranges(struct openconnect_info *vpninfo, uint32_t ip_min,
             return 0;
 
         inc->route = add_option(vpninfo, "split-include", s->data);
-        if (!inc->route)
+        if (!inc->route){
+            free(inc);
             return 0;
+        }
 
         inc->next = vpninfo->ip_info.split_includes;
         vpninfo->ip_info.split_includes = inc;
