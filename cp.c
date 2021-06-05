@@ -36,7 +36,7 @@
 
 enum PACKET_TYPE {
     CMD = 1,
-    IP
+    DATA
 };
 
 static char clients_str[] = "clients/";
@@ -139,7 +139,7 @@ static int snx_send(struct openconnect_info *vpninfo, int sync)
     int ptype = load_be32(buf + 4);
     int ret;
 
-    if (ptype == IP) {
+    if (ptype == DATA) {
         vpn_progress(vpninfo, PRG_TRACE, _("Packet outgoing:\n"));
         dump_buf_hex(vpninfo, PRG_TRACE, '>', (void *) buf, buf_len);
     }
@@ -261,7 +261,7 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type, int sync)
             return -EIO;
 
         if (vpninfo->verbose >= PRG_DEBUG) {
-            if (*pkt_type == IP) {
+            if (*pkt_type == DATA) {
                 vpn_progress(vpninfo, PRG_TRACE, _("Received data packet of %d bytes.\n"),
                         payload_len);
                 dump_buf_hex(vpninfo, PRG_TRACE, '<', (void *) &vpninfo->cstp_pkt->cstp.hdr, payload_len + hdr_len);
@@ -1323,7 +1323,7 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
                 if (snx_handle_command(vpninfo))
                     /* Server-side disconnect. Should exit. */
                     return -EPIPE;
-            } else if (ptype == IP) {
+            } else if (ptype == DATA) {
                 queue_packet(&vpninfo->incoming_queue, vpninfo->cstp_pkt);
                 vpninfo->cstp_pkt = NULL;
             } else
@@ -1336,7 +1336,7 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
     if (!vpninfo->current_ssl_pkt) {
         struct pkt *qpkt = dequeue_packet(&vpninfo->outgoing_queue);
         if (qpkt) {
-            vpninfo->current_ssl_pkt = build_packet(IP, qpkt->data, qpkt->len);
+            vpninfo->current_ssl_pkt = build_packet(DATA, qpkt->data, qpkt->len);
             free(qpkt);
         }
     } else
