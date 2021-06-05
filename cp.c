@@ -1124,7 +1124,7 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
         opt = cpo_get(cpo, cpo_find_child(cpo, idx, "keepalive"));
         vpninfo->ssl_times.keepalive = MAX(10, atoi(opt->value));
         opt = cpo_get(cpo, cpo_find_child(cpo, idx, "authentication"));
-        vpninfo->auth_expiration = time(NULL) + MAX(3600, atoi(opt->value));
+        vpninfo->auth_expiration = time(NULL) + (MAX(3600, atoi(opt->value)));
 
         /* IP, NS, routing info */
         OM_idx = idx = cpo_find_child(cpo, 0, "OM");
