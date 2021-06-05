@@ -658,7 +658,6 @@ static int https_request_wrapper(struct openconnect_info *vpninfo, struct oc_tex
         char **resp_buf, int rdrfetch)
 {
     int result;
-    int no_http_keepalive = vpninfo->no_http_keepalive;
     int dump_http_traffic = vpninfo->dump_http_traffic;
     const char *method = request_body ? "POST" : "GET";
     const char *req_type = request_body ? "application/x-www-form-urlencoded" : NULL;
@@ -669,7 +668,6 @@ static int https_request_wrapper(struct openconnect_info *vpninfo, struct oc_tex
         free(cmd_print);
     }
 
-    vpninfo->no_http_keepalive = 1; /* Force connection close */
     vpninfo->dump_http_traffic = 0; /* Do not print sensitive info */
 
     result = do_https_request(vpninfo, method, req_type, request_body, resp_buf, rdrfetch);
@@ -679,7 +677,6 @@ static int https_request_wrapper(struct openconnect_info *vpninfo, struct oc_tex
         free(cmd_print);
     }
     vpninfo->dump_http_traffic = dump_http_traffic;
-    vpninfo->no_http_keepalive = no_http_keepalive;
     return result;
 }
 
@@ -1176,6 +1173,7 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
 static int snx_start_tunnel(struct openconnect_info *vpninfo)
 {
     int result, ptype;
+    openconnect_close_https(vpninfo, 0);
 
     /* Try to open connection and send hello */
     switch_to(vpninfo, NULL, atoi(get_option(vpninfo, "ssl_port")), NULL);
