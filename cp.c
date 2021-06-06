@@ -1011,8 +1011,8 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
     return result;
 }
 
-static int gen_ranges(struct openconnect_info *vpninfo, uint32_t ip_min,
-        uint32_t ip_max, struct oc_text_buf *s)
+static int gen_ranges(struct oc_ip_info *ip_info,
+        uint32_t ip_min, uint32_t ip_max, struct oc_text_buf *s)
 {
 
     uint32_t ip = ip_min, imask, ip_low, ip_high;
@@ -1035,22 +1035,23 @@ static int gen_ranges(struct openconnect_info *vpninfo, uint32_t ip_min,
 
         inc = malloc(sizeof (*inc));
         if (!inc)
-            return 0;
+            return -ENOMEM;
 
-        inc->route = add_option(vpninfo, "split-include", s->data);
-        if (!inc->route){
+        inc->route = strdup(s->data);
+        if (!inc->route) {
             free(inc);
-            return 0;
+            return -ENOMEM;
         }
 
-        inc->next = vpninfo->ip_info.split_includes;
-        vpninfo->ip_info.split_includes = inc;
+        inc->next = ip_info->split_includes;
+        ip_info->split_includes = inc;
         ip += mask + 1;
     }
     return 1;
 }
 
-static int handle_ip_ranges(struct openconnect_info *vpninfo, const cp_options *cpo, int range_idx)
+static int handle_ip_ranges(struct openconnect_info *vpninfo, struct oc_vpn_option *new_cstp_opts,
+        struct oc_ip_info *ip_info, const cp_options *cpo, int range_idx)
 {
     int ret = 1, ichild = -1;
     const cp_option*from_elem, *to_elem;
@@ -1070,10 +1071,8 @@ static int handle_ip_ranges(struct openconnect_info *vpninfo, const cp_options *
         if (from_ip_int == gw_ip_int)
             continue;
 
-        if (!gen_ranges(vpninfo, from_ip_int, to_ip_int, s)) {
-            ret = 0;
+        if ((ret = gen_ranges(ip_info, from_ip_int, to_ip_int, s)) < 0)
             break;
-        }
     }
     buf_free(s);
     return ret;
@@ -1084,6 +1083,8 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
     int ichild = -1;
     int i, ret = 1, idx, OM_idx, range_idx;
     const cp_option *opt;
+    struct oc_vpn_option *old_cstp_opts = NULL, *new_cstp_opts = NULL;
+    struct oc_ip_info new_ip_info = {};
     cp_options *cpo = cpo_parse(data);
 
     if (!cpo) return 0;
@@ -1106,44 +1107,58 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
         /* IP, NS, routing info */
         OM_idx = idx = cpo_find_child(cpo, 0, "OM");
         opt = cpo_get(cpo, cpo_find_child(cpo, idx, "ipaddr"));
-        /* Check that ip is the same on reconnect.*/
-        if (vpninfo->ip_info.addr && strcmp(vpninfo->ip_info.addr, opt->value)) {
-            ret = 0;
-            vpn_progress(vpninfo, PRG_ERR, _("Received different internal IP address %s (was %s)\n"),
-                    opt->value, vpninfo->ip_info.addr);
+        new_ip_info.addr = add_option_dup(&new_cstp_opts, "vna_ipaddr", opt->value, -1);
+        vpn_progress(vpninfo, PRG_DEBUG, _("Received internal IP address %s\n"), opt->value);
+
+        idx = cpo_find_child(cpo, OM_idx, "dns_servers");
+        if (idx >= 0) {
+            i = 0;
+            while ((i < 3) && cpo_elem_iter(cpo, idx, &ichild)) {
+                opt = cpo_get(cpo, ichild);
+                vpn_progress(vpninfo, PRG_DEBUG, _("Received DNS server %s\n"), opt->value);
+                new_ip_info.dns[i++] = add_option_dup(&new_cstp_opts, "vna_dns_srv", opt->value, -1);
+            }
+        }
+
+        opt = cpo_get(cpo, cpo_find_child(cpo, OM_idx, "dns_suffix"));
+        if (opt->value && strlen(opt->value))
+            new_ip_info.domain = add_option_dup(&new_cstp_opts, "vna_dns_suff", opt->value, -1);
+
+        idx = cpo_find_child(cpo, OM_idx, "wins_servers");
+        if (idx >= 0) {
+            i = 0;
+            ichild = -1;
+            while ((i < 3) && cpo_elem_iter(cpo, idx, &ichild)) {
+                opt = cpo_get(cpo, ichild);
+                vpn_progress(vpninfo, PRG_DEBUG, _("Received WINS server %s\n"), opt->value);
+                new_ip_info.nbns[i++] = add_option_dup(&new_cstp_opts, "vna_wins_srv", opt->value, -1);
+            }
+        }
+        /* Note: optional.subnet not used. */
+
+        range_idx = cpo_find_child(cpo, 0, "range");
+        old_cstp_opts = vpninfo->cstp_options;
+        vpninfo->cstp_options = NULL;
+        if (range_idx >= 0)
+            ret = handle_ip_ranges(vpninfo, new_cstp_opts, &new_ip_info, cpo, range_idx);
+        if (ret > 0)
+            ret = install_vpn_opts(vpninfo, new_cstp_opts, &new_ip_info);
+
+        if (ret < 0) {
+            free_optlist(new_cstp_opts);
+            free_split_routes(&new_ip_info);
+            vpninfo->cstp_options = old_cstp_opts;
         } else {
-            vpninfo->ip_info.addr = set_option(vpninfo, "ipaddr", opt->value);
-            vpn_progress(vpninfo, PRG_DEBUG, _("Received internal IP address %s\n"), opt->value);
+            /* New ip_info is good. Merge old opts with new ones. */
+            struct oc_vpn_option *next, *opt = old_cstp_opts;
 
-            idx = cpo_find_child(cpo, OM_idx, "dns_servers");
-            if (idx >= 0) {
-                i = 0;
-                while ((i < 3) && cpo_elem_iter(cpo, idx, &ichild)) {
-                    opt = cpo_get(cpo, ichild);
-                    vpn_progress(vpninfo, PRG_DEBUG, _("Received DNS server %s\n"), opt->value);
-                    vpninfo->ip_info.dns[i++] = add_option(vpninfo, "dns_srv", opt->value);
-                }
+            for (; opt; opt = next) {
+                if (strstr(opt->option, "vna_") != opt->option)
+                    add_option(vpninfo, opt->option, opt->value);
+
+                next = opt->next;
             }
-
-            opt = cpo_get(cpo, cpo_find_child(cpo, OM_idx, "dns_suffix"));
-            if (opt->value && strlen(opt->value))
-                vpninfo->ip_info.domain = add_option(vpninfo, "dns_suff", opt->value);
-
-            idx = cpo_find_child(cpo, OM_idx, "wins_servers");
-            if (idx >= 0) {
-                i = 0;
-                ichild = -1;
-                while ((i < 3) && cpo_elem_iter(cpo, idx, &ichild)) {
-                    opt = cpo_get(cpo, ichild);
-                    vpn_progress(vpninfo, PRG_DEBUG, _("Received WINS server %s\n"), opt->value);
-                    vpninfo->ip_info.nbns[i++] = add_option(vpninfo, "wins_srv", opt->value);
-                }
-            }
-            /* Note: optional.subnet not used. */
-
-            range_idx = cpo_find_child(cpo, 0, "range");
-            if (range_idx >= 0)
-                ret = handle_ip_ranges(vpninfo, cpo, range_idx);
+            free_optlist(old_cstp_opts);
         }
     }
     cpo_free(cpo);
@@ -1187,10 +1202,10 @@ static int snx_start_tunnel(struct openconnect_info *vpninfo)
     result = handle_hello_reply((char*) vpninfo->cstp_pkt->data, vpninfo);
     FREE(vpninfo->cstp_pkt);
 
-    if (!result) {
+    if (result < 0) {
         vpninfo->quit_reason = "Error while processing hello_reply.";
         openconnect_close_https(vpninfo, 0);
-        return -EIO;
+        return result;
     }
 
     if (send_KA(vpninfo, 1) < 0) {
