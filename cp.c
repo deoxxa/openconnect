@@ -119,14 +119,18 @@ static const char disconnect[] = "(disconnect\n\
         :message (\"User has disconnected.\")\n\
 )";
 
-static struct pkt *build_packet(int type, const void *data, int len)
+static void init_packet(struct pkt *p, int type)
 {
-    char *buf;
-    struct pkt *p = calloc(1, sizeof (struct pkt) +len);
-    p->len = len;
-    buf = (char *) p->cstp.hdr;
+    char *buf = (char *) p->cstp.hdr;
     store_be32(buf, p->len);
     store_be32(buf + sizeof (uint32_t), type);
+}
+
+static struct pkt *build_packet(int type, const void *data, int len)
+{
+    struct pkt *p = calloc(1, sizeof (struct pkt) +len);
+    p->len = len;
+    init_packet(p, type);
     memcpy(p->data, data, len);
     return p;
 }
@@ -1336,8 +1340,8 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
     if (!vpninfo->current_ssl_pkt) {
         struct pkt *qpkt = dequeue_packet(&vpninfo->outgoing_queue);
         if (qpkt) {
-            vpninfo->current_ssl_pkt = build_packet(DATA, qpkt->data, qpkt->len);
-            free(qpkt);
+            vpninfo->current_ssl_pkt = qpkt;
+            init_packet(qpkt, DATA);
         }
     } else
         unmonitor_write_fd(vpninfo, ssl);
