@@ -773,10 +773,9 @@ static int get_gw_info(struct openconnect_info *vpninfo)
 
     if (!find_option(vpninfo, "protocol_version")) {
         vpninfo->redirect_url = strdup(clients_str);
-        if (handle_redirect(vpninfo) >= 0)
+        if ((result = handle_redirect(vpninfo)) >= 0)
             result = do_ccc_client_hello(vpninfo);
-        else
-            result = 0;
+
     }
     return result;
 }
@@ -977,21 +976,19 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
             buf_append(request_body, CCCclientRequestCert);
         } else {
             result = get_user_creds(vpninfo);
-            user_hash=get_option(vpninfo, "username");
-            pwd_hash=get_option(vpninfo, "password");
+            user_hash = get_option(vpninfo, "username");
+            pwd_hash = get_option(vpninfo, "password");
             urlpath = clients_str;
             if (result > 0)
                 buf_append(request_body, CCCclientRequestUserPass, client_type_trac,
-                        user_hash, pwd_hash);
+                    user_hash, pwd_hash);
         }
 
         if (request_body->pos) {
             if (result) {
                 vpninfo->redirect_url = strdup(urlpath);
-                if (handle_redirect(vpninfo) >= 0)
+                if ((result = handle_redirect(vpninfo)) >= 0)
                     result = https_request_wrapper(vpninfo, request_body, &resp_buf, 0);
-                else
-                    result = 0;
             }
             if (result > 0)
                 result = handle_login_reply(resp_buf, vpninfo);
@@ -1160,8 +1157,8 @@ static int snx_start_tunnel(struct openconnect_info *vpninfo)
 
     /* Try to open connection and send hello */
     vpninfo->redirect_url = strdup("/");
-    if (handle_redirect(vpninfo) < 0)
-        return -EIO;
+    if ((result = handle_redirect(vpninfo)) < 0)
+        return result;
 
     if (openconnect_open_https(vpninfo)) {
         vpninfo->quit_reason = "Failed to open HTTPS connection.";
