@@ -1223,6 +1223,11 @@ static int snx_start_tunnel(struct openconnect_info *vpninfo)
 
 static int do_reconnect(struct openconnect_info *vpninfo)
 {
+    /* In standard SNX mode cp_connect frees the cookie. Reconstruct is again */
+    if (!vpninfo->cookie)
+        if (asprintf(&vpninfo->cookie, "%s:%s", get_option(vpninfo, "slim_cookie"),
+                get_option(vpninfo, "session_id")) < 0)
+            return -ENOMEM;
     int result = ssl_reconnect(vpninfo);
     if (result) {
         vpninfo->quit_reason = "Server reconnect failed";
