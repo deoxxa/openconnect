@@ -928,7 +928,7 @@ static int get_user_creds(struct openconnect_info *vpninfo)
 
 static int handle_login_reply(const char*data, struct openconnect_info *vpninfo)
 {
-    int ret = 0;
+    int ret = -EINVAL;
     struct oc_text_buf *error = buf_alloc();
     cp_options *cpo = cpo_parse(data);
 
@@ -940,9 +940,12 @@ static int handle_login_reply(const char*data, struct openconnect_info *vpninfo)
         const struct cp_option *active_key = get_from_rd(cpo, "active_key");
         const struct cp_option *session_id = get_from_rd(cpo, "session_id");
 
-        if (ccc_check_error(cpo, error))
+        if (ccc_check_error(cpo, error)) {
+            const struct cp_option *ec = get_from_rd(cpo, "error_code");
             vpn_progress(vpninfo, PRG_ERR, _("Received error during authentication: %s\n"), error->data);
-        else {
+            if (!strcmp(ec->value, "101"))
+                ret = -EPERM;
+        } else {
             if (authn_status && (!strcmp(authn_status->value, "done") &&
                     is_authenticated && (!strcmp(is_authenticated->value, "true")))) {
                 char *slim_cookie = decode(active_key->value);
