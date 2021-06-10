@@ -1261,16 +1261,21 @@ static int snx_handle_command(struct openconnect_info *vpninfo)
     char *data = (char *) vpninfo->cstp_pkt->data;
     int ret = 0;
 
-    if (strstr(data, "disconnect")) {
+    if (strstr(data, "(disconnect") == data) {
         cp_options *cpo = cpo_parse(data);
         const cp_option *msg = cpo_get(cpo, cpo_find_child(cpo, 0, "message"));
-        if (msg) {
+        if (msg)
             vpn_progress(vpninfo, PRG_INFO, _("Server disconnect message: %s\n"), msg->value);
-        }
         cpo_free(cpo);
         vpninfo->quit_reason = "Disconnect on server request";
-        ret = 1;
-    }
+        return -EPIPE;
+    } else if (strstr(data, "(hello_again") == data)
+        vpn_progress(vpninfo, PRG_INFO, _("'hello_again' received, ignoring.\n"));
+    else if (strstr(data, "(keepalive") == data)
+        vpn_progress(vpninfo, PRG_INFO, _("'keepalive' received.\n"));
+    else
+        vpn_progress(vpninfo, PRG_INFO, _("Unknown server command %s, ignoring.\n"), data);
+
     FREE(vpninfo->cstp_pkt);
     return ret;
 }
