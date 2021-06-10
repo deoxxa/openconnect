@@ -1256,6 +1256,35 @@ static int do_reconnect(struct openconnect_info *vpninfo)
     return snx_start_tunnel(vpninfo);
 }
 
+static int setup_tun_device(struct openconnect_info *vpninfo)
+{
+    int ret;
+
+    if (vpninfo->setup_tun) {
+        vpninfo->setup_tun(vpninfo->cbdata);
+        if (tun_is_up(vpninfo))
+            return 0;
+    }
+
+#ifndef _WIN32
+    if (vpninfo->use_tun_script) {
+        ret = openconnect_setup_tun_script(vpninfo, vpninfo->vpnc_script);
+        if (ret) {
+            vpn_progress(vpninfo, PRG_ERR, _("Set up tun script failed\n"));
+            return ret;
+        }
+    } else
+#endif
+        ret = openconnect_setup_tun_device(vpninfo, vpninfo->vpnc_script, vpninfo->ifname);
+    if (ret) {
+        vpn_progress(vpninfo, PRG_ERR, _("Set up tun device failed\n"));
+        if (!vpninfo->quit_reason)
+            vpninfo->quit_reason = "Set up tun device failed";
+        return ret;
+    }
+    return 0;
+}
+
 static int snx_handle_command(struct openconnect_info *vpninfo)
 {
     char *data = (char *) vpninfo->cstp_pkt->data;
@@ -1269,6 +1298,16 @@ static int snx_handle_command(struct openconnect_info *vpninfo)
         cpo_free(cpo);
         vpninfo->quit_reason = "Disconnect on server request";
         return -EPIPE;
+    } else if (strstr(data, "(hello_reply") == data) {
+        struct oc_ip_info*ip_info = &vpninfo->ip_info;
+        ip_info->addr = ip_info->netmask = ip_info->domain = NULL;
+        memset(ip_info->dns, 0, sizeof (ip_info->dns));
+        memset(ip_info->nbns, 0, sizeof (ip_info->nbns));
+        ret = handle_hello_reply(data, vpninfo);
+        if (ret >= 0) {
+            os_shutdown_tun(vpninfo);
+            ret = setup_tun_device(vpninfo);
+        }
     } else if (strstr(data, "(hello_again") == data)
         vpn_progress(vpninfo, PRG_INFO, _("'hello_again' received, ignoring.\n"));
     else if (strstr(data, "(keepalive") == data)
