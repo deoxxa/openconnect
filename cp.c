@@ -516,10 +516,12 @@ static int cpo_parse_elem(cp_options *cfg, char **input_ptr, int pidx, int *next
 
 static cp_options *cpo_parse(const char *input)
 {
-    if(!input)
+    if (!input)
+        return NULL;
+    size_t full_len = strlen(input);
+    if (full_len < 3)
         return NULL;
     char *key, *data = strdup(input);
-    size_t full_len = strlen(input);
     const char *dataend = data + full_len - 1;
 
     /* Count number of elements in input data which is equal to the amount
@@ -1096,7 +1098,7 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
 
     if (!cpo) return 0;
     opt = cpo->elems;
-    if (opt->key && strstr(opt->key, "hello_reply")) {
+    if (strstr(opt->key, "hello_reply")) {
 
         /* Save versions, just in case */
         opt = cpo_get(cpo, cpo_find_child(cpo, 0, "version"));
