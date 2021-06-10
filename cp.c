@@ -1090,7 +1090,7 @@ static int handle_ip_ranges(struct openconnect_info *vpninfo, struct oc_vpn_opti
 static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo)
 {
     int ichild = -1;
-    int i, ret = 1, idx, OM_idx, range_idx;
+    int i, ret = -EINVAL, idx, OM_idx, range_idx;
     const cp_option *opt;
     struct oc_vpn_option *old_cstp_opts = NULL, *new_cstp_opts = NULL;
     struct oc_ip_info new_ip_info = {};
@@ -1169,6 +1169,17 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
             }
             free_optlist(old_cstp_opts);
         }
+    } else {
+        const cp_option *code = cpo_get(cpo, cpo_find_child(cpo, 0, "code"));
+        const cp_option *msg = cpo_get(cpo, cpo_find_child(cpo, 0, "message"));
+        struct oc_text_buf *error = buf_alloc();
+        if (strstr(opt->key, "disconnect")) {
+            if (strstr(code->value, "201") == code->value)
+                ret = -EPERM;
+            buf_append(error, "%s (code %s)", msg ? msg->value : "", code ? code->value : "");
+            vpn_progress(vpninfo, PRG_ERR, _("hello_reply not received. Server error: %s\n"), error->data);
+        }
+        buf_free(error);
     }
     cpo_free(cpo);
     return ret;
