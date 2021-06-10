@@ -964,7 +964,7 @@ static int handle_login_reply(const char*data, struct openconnect_info *vpninfo)
     return ret;
 }
 
-static int do_get_cookie(struct openconnect_info *vpninfo)
+static int do_get_cookie(struct openconnect_info *vpninfo, int rekey)
 {
     const char *user_hash = NULL, *pwd_hash = NULL, *urlpath = NULL;
     char *resp_buf = NULL;
@@ -984,7 +984,8 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
                 urlpath = "/clients/cert";
             buf_append(request_body, CCCclientRequestCert);
         } else {
-            result = get_user_creds(vpninfo);
+            if (!rekey)
+                result = get_user_creds(vpninfo);
             user_hash = get_option(vpninfo, "username");
             pwd_hash = get_option(vpninfo, "password");
             urlpath = clients_str;
@@ -1111,7 +1112,10 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
         opt = cpo_get(cpo, cpo_find_child(cpo, idx, "keepalive"));
         vpninfo->ssl_times.keepalive = MAX(10, atoi(opt->value));
         opt = cpo_get(cpo, cpo_find_child(cpo, idx, "authentication"));
-        vpninfo->auth_expiration = time(NULL) + (MAX(3600, atoi(opt->value)));
+        vpninfo->ssl_times.rekey = MAX(3600, atoi(opt->value));
+        vpninfo->auth_expiration = time(NULL) + vpninfo->ssl_times.rekey;
+        vpninfo->ssl_times.rekey_method = REKEY_SSL;
+        vpninfo->ssl_times.rekey -= vpninfo->ssl_times.keepalive;
 
         /* IP, NS, routing info */
         OM_idx = idx = cpo_find_child(cpo, 0, "OM");
@@ -1241,14 +1245,22 @@ static int snx_start_tunnel(struct openconnect_info *vpninfo)
     return 0;
 }
 
-static int do_reconnect(struct openconnect_info *vpninfo)
+static int do_reconnect(struct openconnect_info *vpninfo, int rekey)
 {
+    int result;
     /* In standard SNX mode cp_connect frees the cookie. Reconstruct is again */
-    if (!vpninfo->cookie)
-        if (asprintf(&vpninfo->cookie, "%s:%s", get_option(vpninfo, "slim_cookie"),
+    if (!vpninfo->cookie) {
+        if (rekey) {
+            openconnect_close_https(vpninfo, 0);
+            result = do_get_cookie(vpninfo, 1);
+            if (result <= 0)
+                return result;
+        } else
+            if (asprintf(&vpninfo->cookie, "%s:%s", get_option(vpninfo, "slim_cookie"),
                 get_option(vpninfo, "session_id")) < 0)
             return -ENOMEM;
-    int result = ssl_reconnect(vpninfo);
+    }
+    result = ssl_reconnect(vpninfo);
     if (result) {
         vpninfo->quit_reason = "Server reconnect failed";
         return result;
@@ -1324,7 +1336,7 @@ int cp_obtain_cookie(struct openconnect_info *vpninfo)
 
     int ret;
     do {
-        ret = do_get_cookie(vpninfo);
+        ret = do_get_cookie(vpninfo, 0);
         if (ret <= 0)
             break;
     } while (!vpninfo->cookie);
@@ -1371,7 +1383,7 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
     int ret = 0, result;
 
     if (vpninfo->ssl_fd == -1)
-        return do_reconnect(vpninfo);
+        return do_reconnect(vpninfo, 0);
 
     /* Service one incoming packet. */
     if (readable) {
@@ -1380,7 +1392,7 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
         ret += result;
         if (result < 0)
             /* Try to reconnect on error */
-            return do_reconnect(vpninfo);
+            return do_reconnect(vpninfo, 0);
 
         if (result != 0) {
             if (ptype == CMD) {
@@ -1410,25 +1422,27 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 
         if ((result = snx_send_packet(vpninfo)) < 0)
             /* Try to reconnect on error */
-            return do_reconnect(vpninfo);
+            return do_reconnect(vpninfo, 0);
         ret += result;
     }
 
     /* Send KA if previous packet was successfully sent. */
     if (!vpninfo->current_ssl_pkt) {
-        switch (keepalive_action(&vpninfo->ssl_times, timeout)) {
+        int act = keepalive_action(&vpninfo->ssl_times, timeout);
+        switch (act) {
         case KA_DPD:
         case KA_KEEPALIVE:
         {
             if ((result = send_KA(vpninfo, 0)) < 0)
                 /* Try to reconnect on error */
-                return do_reconnect(vpninfo);
+                return do_reconnect(vpninfo, 0);
             ret += result;
             break;
         }
+        case KA_REKEY:
         case KA_DPD_DEAD:
         {
-            return do_reconnect(vpninfo);
+            return do_reconnect(vpninfo, KA_REKEY == act);
         }
         }
     }
