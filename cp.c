@@ -290,7 +290,7 @@ static int send_disconnect(struct openconnect_info *vpninfo)
 {
     return snx_send_command(vpninfo, disconnect, 1);
 }
-/* NOTE: IPv4 versions */
+/* NOTE: Legacy IP versions */
 static uint32_t strtoipv4(const char *ip)
 {
     uint32_t ret = 0;
@@ -1072,7 +1072,7 @@ static int handle_ip_ranges(struct openconnect_info *vpninfo, struct oc_vpn_opti
 
         from_elem = cpo_get(cpo, cpo_find_child(cpo, ichild, "from"));
         to_elem = cpo_get(cpo, cpo_find_child(cpo, ichild, "to"));
-        vpn_progress(vpninfo, PRG_DEBUG, _("Received IP address range %s:%s\n"),
+        vpn_progress(vpninfo, PRG_DEBUG, _("Received Legacy IP address range %s:%s\n"),
                 from_elem->value, to_elem->value);
 
         from_ip_int = strtoipv4(from_elem->value);
@@ -1121,7 +1121,7 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
         OM_idx = idx = cpo_find_child(cpo, 0, "OM");
         opt = cpo_get(cpo, cpo_find_child(cpo, idx, "ipaddr"));
         new_ip_info.addr = add_option_dup(&new_cstp_opts, "vna_ipaddr", opt->value, -1);
-        vpn_progress(vpninfo, PRG_DEBUG, _("Received internal IP address %s\n"), opt->value);
+        vpn_progress(vpninfo, PRG_DEBUG, _("Received internal Legacy IP address %s\n"), opt->value);
 
         idx = cpo_find_child(cpo, OM_idx, "dns_servers");
         if (idx >= 0) {
