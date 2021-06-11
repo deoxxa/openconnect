@@ -44,46 +44,46 @@ static char clients_str[] = "/clients/";
 /* CCC protocol commands */
 
 static const char CCCclientRequestClientHello[] = "(CCCclientRequest\n\
-\t\t:RequestHeader (\n\
-\t\t\t\t:id (1)\n\
-\t\t\t\t:session_id ()\n\
-\t\t\t\t:type (ClientHello)\n\
-\t\t\t\t:protocol_version (100)\n\
-\t\t)\n\
-\t\t:RequestData (\n\
-\t\t\t\t:client_info (\n\
-\t\t\t\t:client_type (TRAC)\n\
-\t\t\t\t:client_version (%d)\n\
-\t\t\t\t:gw_ip (%s)\n\
-\t\t\t\t)\n\
-\t\t)\n\
+    :RequestHeader (\n\
+        :id (1)\n\
+        :session_id ()\n\
+        :type (ClientHello)\n\
+        :protocol_version (100)\n\
+    )\n\
+    :RequestData (\n\
+        :client_info (\n\
+        :client_type (TRAC)\n\
+        :client_version (%d)\n\
+        :gw_ip (%s)\n\
+        )\n\
+    )\n\
 )";
 
 static const char client_type_trac[] = "TRAC";
 static const char client_type_mobile[] = "SYMBIAN";
 
 static const char CCCclientRequestUserPass[] = "(CCCclientRequest\n\
-\t\t:RequestHeader (\n\
-\t\t\t\t:id (2)\n\
-\t\t\t\t:type (UserPass)\n\
-\t\t\t\t:session_id ()\n\
-\t\t)\n\
-\t\t:RequestData (\n\
-\t\t\t:client_type (%s)\n\
-\t\t\t\t:username (%s)\n\
-\t\t\t\t:password (%s)\n\
-\t\t)\n\
+    :RequestHeader (\n\
+        :id (2)\n\
+        :type (UserPass)\n\
+        :session_id ()\n\
+    )\n\
+    :RequestData (\n\
+        :client_type (%s)\n\
+        :username (%s)\n\
+        :password (%s)\n\
+    )\n\
 )";
 
 static const char CCCclientRequestCert[] = "(CCCclientRequest\n\
-\t\t:RequestHeader (\n\
-\t\t\t\t:id (1)\n\
-\t\t\t\t:type (CertAuth)\n\
-\t\t\t\t:session_id ()\n\
-\t\t)\n\
-\t\t:RequestData (\n\
-\t\t\t:client_type (TRAC)\n\
-\t\t)\n\
+    :RequestHeader (\n\
+        :id (1)\n\
+        :type (CertAuth)\n\
+        :session_id ()\n\
+    )\n\
+    :RequestData (\n\
+        :client_type (TRAC)\n\
+    )\n\
 )";
 
 static const char CCCclientRequestSignout[] = "(CCCclientRequest\n\
