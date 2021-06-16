@@ -700,7 +700,6 @@ static int do_ccc_client_hello(struct openconnect_info *vpninfo)
     static char pv[] = "protocol_version";
     int result, idx, idx2 = -1, ichild = -1;
     char *resp_buf = NULL;
-    struct oc_text_buf *buf = buf_alloc();
     cp_options *cpo = NULL;
     const cp_option *opt = NULL;
 
@@ -709,6 +708,7 @@ static int do_ccc_client_hello(struct openconnect_info *vpninfo)
     if (result < 0)
         return result;
     char *gw = vpninfo->ip_info.gateway_addr;
+    struct oc_text_buf *buf = buf_alloc();
 
     /* NOTE: client version fixed for now. */
     buf_append(buf, CCCclientRequestClientHello, 0, gw ? gw : "");
