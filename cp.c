@@ -1178,7 +1178,7 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
         const cp_option *msg = cpo_get(cpo, cpo_find_child(cpo, 0, "message"));
         struct oc_text_buf *error = buf_alloc();
         if (strstr(opt->key, "disconnect")) {
-            if (strstr(code->value, "201") == code->value)
+            if (code && strstr(code->value, "201") == code->value)
                 ret = -EPERM;
             buf_append(error, "%s (code %s)", msg ? msg->value : "", code ? code->value : "");
             vpn_progress(vpninfo, PRG_ERR, _("hello_reply not received. Server error: %s\n"), error->data);
