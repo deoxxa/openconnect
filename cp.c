@@ -629,7 +629,7 @@ static const char *set_option(struct openconnect_info *vpninfo, const char *key,
 {
     struct oc_vpn_option *opt = find_option(vpninfo, key);
     if (opt) {
-        free(opt->value);
+        FREE_PASS(opt->value);
         opt->value = strdup(val);
     } else
         return add_option(vpninfo, key, val);
@@ -984,14 +984,20 @@ static int do_get_cookie(struct openconnect_info *vpninfo, int rekey)
                 urlpath = "/clients/cert";
             buf_append(request_body, CCCclientRequestCert);
         } else {
-            if (!rekey)
+            if (rekey)
+                result = -EINVAL;
+            else {
                 result = get_user_creds(vpninfo);
-            user_hash = get_option(vpninfo, "username");
-            pwd_hash = get_option(vpninfo, "password");
-            urlpath = clients_str;
-            if (result > 0)
-                buf_append(request_body, CCCclientRequestUserPass, client_type_trac,
-                    user_hash, pwd_hash);
+                user_hash = get_option(vpninfo, "username");
+                pwd_hash = get_option(vpninfo, "password");
+                urlpath = clients_str;
+                if (result > 0) {
+                    buf_append(request_body, CCCclientRequestUserPass, client_type_trac,
+                            user_hash, pwd_hash);
+                    set_option(vpninfo, "username", "");
+                    set_option(vpninfo, "password", "");
+                }
+            }
         }
 
         if (request_body->pos) {
