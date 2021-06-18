@@ -182,6 +182,8 @@ static char *hide_auth_data(const char *data)
         fld_start = ret;
         while ((fld_start = strstr(fld_start, fld))) {
             val_start = strstr(fld_start, "(");
+            if (!val_start)
+                continue;
             if (fld_start[strlen(fld)] == ' ') {
                 val_end = strstr(fld_start, ")");
                 if (val_end > (val_start + 1)) {
