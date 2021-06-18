@@ -1321,9 +1321,9 @@ static int snx_handle_command(struct openconnect_info *vpninfo)
             ret = setup_tun_device(vpninfo);
         }
     } else if (strstr(data, "(hello_again") == data)
-        vpn_progress(vpninfo, PRG_INFO, _("'hello_again' received, ignoring.\n"));
+        vpn_progress(vpninfo, PRG_DEBUG, _("'hello_again' received, ignoring.\n"));
     else if (strstr(data, "(keepalive") == data)
-        vpn_progress(vpninfo, PRG_INFO, _("'keepalive' received.\n"));
+        vpn_progress(vpninfo, PRG_DEBUG, _("'keepalive' received.\n"));
     else
         vpn_progress(vpninfo, PRG_INFO, _("Unknown server command %s, ignoring.\n"), data);
 
