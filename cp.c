@@ -60,7 +60,6 @@ static const char CCCclientRequestClientHello[] = "(CCCclientRequest\n\
 )";
 
 static const char client_type_trac[] = "TRAC";
-static const char client_type_mobile[] = "SYMBIAN";
 
 static const char CCCclientRequestUserPass[] = "(CCCclientRequest\n\
     :RequestHeader (\n\
