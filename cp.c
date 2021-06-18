@@ -153,8 +153,10 @@ static int snx_send(struct openconnect_info *vpninfo, int sync)
     else
         ret = ssl_nonblock_write(vpninfo, 0, buf, buf_len);
     /* Resend only if ret == 0! */
-    if (ret != 0)
+    if (ret != 0) {
         FREE(vpninfo->current_ssl_pkt);
+        vpninfo->ssl_times.last_tx = time(NULL);
+    }
 
     if (ret > 0) {
         if (ret < buf_len) {
@@ -281,8 +283,6 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type, int sync)
 
 static int send_KA(struct openconnect_info *vpninfo, int sync)
 {
-    /* Update last_tx here only, because native client send KA messages constantly. */
-    vpninfo->ssl_times.last_tx = time(NULL);
     return snx_send_command(vpninfo, keepalive, sync);
 }
 
