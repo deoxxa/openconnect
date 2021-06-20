@@ -156,17 +156,6 @@ static int snx_send(struct openconnect_info *vpninfo, int sync)
         FREE(vpninfo->current_ssl_pkt);
         vpninfo->ssl_times.last_tx = time(NULL);
     }
-
-    if (ret > 0) {
-        if (ret < buf_len) {
-            vpn_progress(vpninfo, PRG_ERR,
-                    _("SSL wrote too few bytes! Asked for %d, sent %d.\n"),
-                    buf_len, ret);
-            vpninfo->quit_reason = "Internal error";
-            /* Should reconnect on error anyway. */
-            ret = -EIO;
-        }
-    }
     return ret;
 }
 
