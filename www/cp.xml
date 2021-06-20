@@ -1,0 +1,31 @@
+<PAGE>
+	<INCLUDE file="inc/header.tmpl" />
+
+	<VAR match="VAR_SEL_PROTOCOLS" replace="selected" />
+	<VAR match="VAR_SEL_ARRAY" replace="selected" />
+	<PARSE file="menu1.xml" />
+	<PARSE file="menu2-protocols.xml" />
+
+	<INCLUDE file="inc/content.tmpl" />
+
+<h1>CheckPoint SNX (SSL VPN)</h1>
+
+<p>Experimental support for <a href="https://www.checkpoint.com/quantum/remote-access-vpn/">SSL VPN</a>
+was added to OpenConnect in June 2021. </p>
+
+<p>CheckPoint mode is requested by adding <tt>--protocol=cp</tt>
+to the command line:
+<pre>
+  openconnect --protocol=cp snx.example.com
+</pre></p>
+
+<h2>Quirks and Issues</h2>
+
+<p>Currently, OpenConnect supports basic username and password, PinPad, KeyFob,
+    Challenge and certificate-based authentication. Mobile Access mode is a WIP.</p>
+
+<p>Data transport over ESP is not yet supported.</p>
+
+<p>Please, do not specify any path part of the server URL. It is not supported.</p>
+	<INCLUDE file="inc/footer.tmpl" />
+</PAGE>
