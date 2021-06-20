@@ -1028,7 +1028,7 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
 }
 
 static int gen_ranges(struct oc_ip_info *ip_info,
-        uint32_t ip_min, uint32_t ip_max, struct oc_text_buf *s)
+        uint32_t ip_min, uint32_t ip_max)
 {
 
     uint32_t ip = ip_min, imask, ip_low, ip_high;
@@ -1046,19 +1046,18 @@ static int gen_ranges(struct oc_ip_info *ip_info,
                 break;
             }
         }
-        buf_truncate(s);
-        buf_append(s, "%s/%d", ipv4tostr(ip), 32 - imask);
 
         inc = malloc(sizeof (*inc));
         if (!inc)
             return -ENOMEM;
 
-        inc->route = strdup(s->data);
-        if (!inc->route) {
+        char *s;
+        if (asprintf(&s, "%s/%d", ipv4tostr(ip), 32 - imask) < 0) {
             free(inc);
             return -ENOMEM;
         }
 
+        inc->route = s;
         inc->next = ip_info->split_includes;
         ip_info->split_includes = inc;
         ip += mask + 1;
@@ -1071,7 +1070,6 @@ static int handle_ip_ranges(struct openconnect_info *vpninfo, struct oc_vpn_opti
 {
     int ret = 1, ichild = -1;
     const cp_option*from_elem, *to_elem;
-    struct oc_text_buf*s = buf_alloc();
     uint32_t from_ip_int, to_ip_int, gw_ip_int = strtoipv4(vpninfo->ip_info.gateway_addr);
 
     while (cpo_elem_iter(cpo, range_idx, &ichild)) {
@@ -1087,10 +1085,9 @@ static int handle_ip_ranges(struct openconnect_info *vpninfo, struct oc_vpn_opti
         if (from_ip_int == gw_ip_int)
             continue;
 
-        if ((ret = gen_ranges(ip_info, from_ip_int, to_ip_int, s)) < 0)
+        if ((ret = gen_ranges(ip_info, from_ip_int, to_ip_int)) < 0)
             break;
     }
-    buf_free(s);
     return ret;
 }
 
