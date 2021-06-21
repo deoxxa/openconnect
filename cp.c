@@ -271,6 +271,10 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type, int sync)
             dump_buf_hex(vpninfo, PRG_TRACE, '<', (void *) &vpninfo->cstp_pkt->cpsnx.hdr, payload_len + hdr_len);
         } else if (*pkt_type == CMD) {
 	    char *cmd = (char *) vpninfo->cstp_pkt->data;
+	    /* XX: hide_auth_data, snx_handle_command, and vpn_progress (immediately below)
+	     * all assume this is a null-terminated command. We need to ensure that it is.
+	     */
+	    cmd[vpninfo->cstp_pkt->len - 1] = '\0';
 #ifdef INSECURE_DEBUGGING
             vpn_progress(vpninfo, PRG_DEBUG, _("Command received:\n%s\n"), cmd);
 #else
