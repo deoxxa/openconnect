@@ -295,10 +295,6 @@ static int send_KA(struct openconnect_info *vpninfo, int sync)
     return snx_send_command(vpninfo, keepalive, sync);
 }
 
-static int send_disconnect(struct openconnect_info *vpninfo)
-{
-    return snx_send_command(vpninfo, disconnect, 1);
-}
 /* NOTE: Legacy IP versions */
 static uint32_t strtoipv4(const char *ip)
 {
@@ -1240,7 +1236,7 @@ int cp_bye(struct openconnect_info *vpninfo, const char *reason)
     char *colon = strchr(vpninfo->cookie, ':'); /* slim_cookie:session_id */
 
     if (vpninfo->ssl_fd != -1) {
-        send_disconnect(vpninfo);
+        snx_send_command(vpninfo, disconnect, 0);
         openconnect_close_https(vpninfo, 0);
     }
 
