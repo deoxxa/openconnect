@@ -917,7 +917,7 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
 
     if (!cpo) return 0;
     opt = cpo->elems;
-    if (strstr(opt->key, "hello_reply")) {
+    if (!strcmp(opt->key, "hello_reply")) {
 
         /* Log version strings */
         opt = cpo_get(cpo, cpo_find_child(cpo, 0, "version"));
@@ -980,9 +980,9 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
     } else {
         const cp_option *code = cpo_get(cpo, cpo_find_child(cpo, 0, "code"));
         const cp_option *msg = cpo_get(cpo, cpo_find_child(cpo, 0, "message"));
-        if (strstr(opt->key, "disconnect")) {
+        if (!strcmp(opt->key, "disconnect")) {
             struct oc_text_buf *error = buf_alloc();
-            if (code && strstr(code->value, "201") == code->value)
+            if (code && !strncmp(code->value, "201", 3))
                 ret = -EPERM;
             buf_append(error, "%s (code %s)", msg ? msg->value : "", code ? code->value : "");
             vpn_progress(vpninfo, PRG_ERR, _("hello_reply not received. Server error: %s\n"), error->data);
@@ -1091,7 +1091,7 @@ static int snx_handle_command(struct openconnect_info *vpninfo)
     char *data = (char *) vpninfo->cstp_pkt->data;
     int ret = 0;
 
-    if (strstr(data, "(disconnect") == data) {
+    if (!strncmp(data, "(disconnect", 11)) {
         cp_options *cpo = cpo_parse(data);
         const cp_option *msg = cpo_get(cpo, cpo_find_child(cpo, 0, "message"));
         if (msg)
@@ -1099,7 +1099,7 @@ static int snx_handle_command(struct openconnect_info *vpninfo)
         cpo_free(cpo);
         vpninfo->quit_reason = "Disconnect on server request";
         return -EPIPE;
-    } else if (strstr(data, "(hello_reply") == data) {
+    } else if (!strncmp(data, "(hello_reply", 12)) {
         struct oc_ip_info*ip_info = &vpninfo->ip_info;
         ip_info->addr = ip_info->netmask = ip_info->domain = NULL;
         memset(ip_info->dns, 0, sizeof (ip_info->dns));
@@ -1109,9 +1109,9 @@ static int snx_handle_command(struct openconnect_info *vpninfo)
             os_shutdown_tun(vpninfo);
             ret = setup_tun_device(vpninfo);
         }
-    } else if (strstr(data, "(hello_again") == data)
+    } else if (!strncmp(data, "(hello_again", 12))
         vpn_progress(vpninfo, PRG_DEBUG, _("'hello_again' received, ignoring.\n"));
-    else if (strstr(data, "(keepalive") == data)
+    else if (!strncmp(data, "(keepalive", 10))
         vpn_progress(vpninfo, PRG_DEBUG, _("'keepalive' received.\n"));
     else
         vpn_progress(vpninfo, PRG_INFO, _("Unknown server command %s, ignoring.\n"), data);
