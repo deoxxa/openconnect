@@ -312,38 +312,6 @@ int enc_dec_table[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
-/* Reverse string in-place. len is always even. */
-static void strrv(char *data, int len)
-{
-    int i, j;
-    char c;
-    for (i = 0; i < len / 2; i++) {
-        j = len - i - 1;
-        c = data[j];
-        data[j] = data[i];
-        data[i] = c;
-    }
-}
-
-static void bytes_from_hex(const char *hex, uint8_t *bytes)
-{
-    int len = strlen(hex);
-    uint32_t off = 0, val;
-    int i;
-    for (i = 0; i < len / 2; i++) {
-        off += 2 * sscanf(hex + off, "%2x", &val);
-        bytes [i] = val & 0xff;
-    }
-}
-
-static void hex_from_bytes(const uint8_t *bytes, int len, char *hex)
-{
-    int off = 0, i;
-    for (i = 0; i < len; i++)
-        off += sprintf(hex + off, "%02hx", (uint16_t) bytes[i]);
-    hex[off] = '\0';
-}
-
 static
 uint8_t enc_dec_ichr(int i, uint8_t ordc)
 {
@@ -368,29 +336,27 @@ uint8_t enc_dec_ichr(int i, uint8_t ordc)
     return ret;
 }
 
-static char *encode(const char *s)
+static int buf_append_scrambled(struct oc_text_buf *buf, const char *s)
 {
     int i, slen = strlen(s);
-    char *ret = calloc(1, 2 * slen + 1);
-    char *tmp = strdup(s);
 
-    for (i = 0; i < slen; i++)
-        tmp[i] = enc_dec_ichr(i, (uint8_t) tmp[i]);
-
-    strrv(tmp, slen);
-    hex_from_bytes((uint8_t *) tmp, slen, ret);
-    free_pass(&tmp);
-    return ret;
+    for (i = slen - 1; i >= 0; i--)
+	    buf_append(buf, "%02x", enc_dec_ichr(i, (uint8_t) s[i]));
+    return buf_error(buf);
 }
 
-static char *decode(const char *s)
+static char *unscramble(char *s)
 {
-    int i, slen = strlen(s), retlen = slen / 2;
-    char *ret = calloc(retlen + 1, 1);
-    bytes_from_hex(s, (uint8_t *) ret);
-    strrv(ret, retlen);
+    int i, slen = strlen(s), retlen = slen >> 1;
+    char *ret = malloc(retlen + 1);
+
+    if (!ret)
+	    return NULL;
+    else if (slen & 1)
+	    return NULL;
+
     for (i = 0; i < retlen; i++)
-        ret[i] = enc_dec_ichr(i, (uint8_t) ret[i]);
+	    ret[i] = enc_dec_ichr(i, unhex(s + slen - 2 - (i << 1)));
     ret[retlen] = 0;
     return ret;
 }
@@ -674,7 +640,7 @@ static int ccc_check_error(const cp_options *cpo, struct oc_text_buf *s)
     if (atoi(return_code->value) != 600 || error_code) {
         error_message = get_from_rd(cpo, "error_message");
         if (error_message)
-            msg = decode(error_message->value);
+            msg = unscramble(error_message->value);
         else {
             error_msg = get_from_rd(cpo, "error_msg");
             if (error_msg)
@@ -857,7 +823,7 @@ static int handle_login_reply(const char*data, struct openconnect_info *vpninfo)
         } else {
             if (authn_status && (!strcmp(authn_status->value, "done") &&
                     is_authenticated && (!strcmp(is_authenticated->value, "true")))) {
-                char *slim_cookie = decode(active_key->value);
+                char *slim_cookie = unscramble(active_key->value);
                 set_option(vpninfo, "slim_cookie", slim_cookie);
                 set_option(vpninfo, "session_id", session_id->value);
                 FREE_PASS(slim_cookie);
@@ -900,13 +866,9 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
 		buf_append(request_body, CCCclientRequestUserPass, client_type_trac);
 		struct oc_form_opt *opt;
 		for (opt = form->opts; opt; opt = opt->next) {
-			char *encval = encode(opt->_value);
-			if (!encval) {
-				result = -ENOMEM;
-				goto out;
-			}
-			buf_append(request_body, "        :%s (%s)\n", opt->name, encval);
-			free(encval);
+			buf_append(request_body, "        :%s (", opt->name);
+			buf_append_scrambled(request_body, opt->_value);
+			buf_append(request_body, ")\n");
 		}
 		buf_append(request_body, "    )\n)");
 		free_auth_form(form);
