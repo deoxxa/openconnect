@@ -156,6 +156,7 @@ static int snx_send(struct openconnect_info *vpninfo, int sync)
 }
 
 /* Special handling for commands: hide authentication-related fields */
+#ifndef INSECURE_DEBUGGING
 static char *hide_auth_data(const char *data)
 {
     static const char *excl_fields[] = {"username", "password", "cookie", "active_key", "session_id"};
@@ -181,16 +182,21 @@ static char *hide_auth_data(const char *data)
     }
     return ret;
 }
+#endif
 
 static int snx_send_command(struct openconnect_info *vpninfo, const char*cmd, int sync)
 {
     int len = strlen(cmd) + 1;
     vpninfo->current_ssl_pkt = build_packet(CMD, cmd, len);
+#ifdef INSECURE_DEBUGGING
+    vpn_progress(vpninfo, PRG_DEBUG, _("Command outgoing (sync=%d)\n%s\n"), sync, cmd);
+#else
     if (vpninfo->verbose >= PRG_DEBUG) {
         char *cmd_print = hide_auth_data(cmd);
-        vpn_progress(vpninfo, PRG_DEBUG, _("Command outgoing:\n%s\n"), cmd_print);
+        vpn_progress(vpninfo, PRG_DEBUG, _("Command outgoing (sync=%d):\n%s\n"), sync, cmd_print);
         free(cmd_print);
     }
+#endif
     return snx_send(vpninfo, sync);
 }
 
@@ -273,9 +279,14 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type, int sync)
                     payload_len);
             dump_buf_hex(vpninfo, PRG_TRACE, '<', (void *) &vpninfo->cstp_pkt->cstp.hdr, payload_len + hdr_len);
         } else if (*pkt_type == CMD) {
-            char *cmd_print = hide_auth_data((char*) vpninfo->cstp_pkt->data);
+	    char *cmd = (char *) vpninfo->cstp_pkt->data;
+#ifdef INSECURE_DEBUGGING
+            vpn_progress(vpninfo, PRG_DEBUG, _("Command received:\n%s\n"), cmd);
+#else
+            char *cmd_print = hide_auth_data(cmd);
             vpn_progress(vpninfo, PRG_DEBUG, _("Command received:\n%s\n"), cmd_print);
             free(cmd_print);
+#endif
         }
     }
     return ret;
@@ -563,9 +574,11 @@ static int https_request_wrapper(struct openconnect_info *vpninfo, struct oc_tex
         char **resp_buf, int rdrfetch)
 {
     int result;
-    int dump_http_traffic = vpninfo->dump_http_traffic;
     const char *method = request_body ? "POST" : "GET";
     const char *req_type = request_body ? "application/x-www-form-urlencoded" : NULL;
+
+#ifndef INSECURE_DEBUGGING
+    int dump_http_traffic = vpninfo->dump_http_traffic;
 
     if (request_body && vpninfo->verbose >= PRG_DEBUG) {
         char*cmd_print = hide_auth_data(request_body->data);
@@ -574,14 +587,18 @@ static int https_request_wrapper(struct openconnect_info *vpninfo, struct oc_tex
     }
 
     vpninfo->dump_http_traffic = 0; /* Do not print sensitive info */
+#endif
 
     result = do_https_request(vpninfo, method, req_type, request_body, resp_buf, rdrfetch);
+
+#ifndef INSECURE_DEBUGGING
     if (*resp_buf && vpninfo->verbose >= PRG_DEBUG) {
         char *cmd_print = hide_auth_data(*resp_buf);
         vpn_progress(vpninfo, PRG_DEBUG, _("HTTP response data:\n%s\n"), cmd_print);
         free(cmd_print);
     }
     vpninfo->dump_http_traffic = dump_http_traffic;
+#endif
     return result;
 }
 
