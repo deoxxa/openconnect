@@ -112,18 +112,11 @@ static const char disconnect[] = "(disconnect\n\
         :message (\"User has disconnected.\")\n\
 )";
 
-static void init_packet(struct pkt *p, int type)
-{
-    char *buf = (char *) p->cstp.hdr;
-    store_be32(buf, p->len);
-    store_be32(buf + sizeof (uint32_t), type);
-}
-
 static struct pkt *build_packet(int type, const void *data, int len)
 {
     struct pkt *p = calloc(1, sizeof (struct pkt) +len);
     p->len = len;
-    init_packet(p, type);
+    store_be32(p->cpsnx.hdr + 4, type);
     memcpy(p->data, data, len);
     return p;
 }
@@ -131,20 +124,20 @@ static struct pkt *build_packet(int type, const void *data, int len)
 static int snx_send(struct openconnect_info *vpninfo, int sync)
 {
     struct pkt *p = vpninfo->current_ssl_pkt;
-    char *buf = (char*) p->cstp.hdr;
-    int buf_len = p->len + sizeof (p->cstp.hdr);
-    int ptype = load_be32(buf + 4);
+    int tot_len = p->len + sizeof (p->cpsnx.hdr);
+    int ptype = load_be32(p->cpsnx.hdr + 4);
     int ret;
 
+    store_be32(p->cpsnx.hdr, p->len);
     if (ptype == DATA) {
         vpn_progress(vpninfo, PRG_TRACE, _("Packet outgoing:\n"));
-        dump_buf_hex(vpninfo, PRG_TRACE, '>', (void *) buf, buf_len);
+        dump_buf_hex(vpninfo, PRG_TRACE, '>', (void *) p->cpsnx.hdr, tot_len);
     }
 
     if (sync)
-        ret = vpninfo->ssl_write(vpninfo, buf, buf_len);
+        ret = vpninfo->ssl_write(vpninfo, p->cpsnx.hdr, tot_len);
     else
-        ret = ssl_nonblock_write(vpninfo, 0, buf, buf_len);
+        ret = ssl_nonblock_write(vpninfo, 0, p->cpsnx.hdr, tot_len);
     /* Resend only if ret == 0! */
     if (ret != 0) {
         FREE(vpninfo->current_ssl_pkt);
@@ -218,7 +211,7 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type, int sync)
     /* Read header */
     if (pkt->len == 0) {
         int len_rec = hdr_len - vpninfo->partial_rec_size;
-        buf = pkt->cstp.hdr + vpninfo->partial_rec_size;
+        buf = pkt->cpsnx.hdr + vpninfo->partial_rec_size;
         if (sync)
             ret = vpninfo->ssl_read(vpninfo, (char *) buf, len_rec);
         else
@@ -236,7 +229,7 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type, int sync)
             return -EAGAIN;
         }
 
-        pkt->len = load_be32(pkt->cstp.hdr);
+        pkt->len = load_be32(pkt->cpsnx.hdr);
         realloc_inplace(vpninfo->cstp_pkt, sizeof (struct pkt) + pkt->len);
         if (!vpninfo->cstp_pkt) {
             vpn_progress(vpninfo, PRG_ERR, _("Allocation failed.\n"));
@@ -247,7 +240,7 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type, int sync)
     }
 
     /* Read payload */
-    *pkt_type = load_be32(pkt->cstp.hdr + 4);
+    *pkt_type = load_be32(pkt->cpsnx.hdr + 4);
     int payload_len = pkt->len - vpninfo->partial_rec_size;
     buf = pkt->data + vpninfo->partial_rec_size;
 
@@ -275,7 +268,7 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type, int sync)
         if (*pkt_type == DATA) {
             vpn_progress(vpninfo, PRG_TRACE, _("Received data packet of %d bytes.\n"),
                     payload_len);
-            dump_buf_hex(vpninfo, PRG_TRACE, '<', (void *) &vpninfo->cstp_pkt->cstp.hdr, payload_len + hdr_len);
+            dump_buf_hex(vpninfo, PRG_TRACE, '<', (void *) &vpninfo->cstp_pkt->cpsnx.hdr, payload_len + hdr_len);
         } else if (*pkt_type == CMD) {
 	    char *cmd = (char *) vpninfo->cstp_pkt->data;
 #ifdef INSECURE_DEBUGGING
@@ -1195,7 +1188,7 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
         struct pkt *qpkt = dequeue_packet(&vpninfo->outgoing_queue);
         if (qpkt) {
             vpninfo->current_ssl_pkt = qpkt;
-            init_packet(qpkt, DATA);
+            store_be32(qpkt->cpsnx.hdr + 4, DATA);
         }
     } else
         unmonitor_write_fd(vpninfo, ssl);

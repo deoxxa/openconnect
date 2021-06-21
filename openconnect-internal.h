@@ -176,6 +176,10 @@ struct pkt {
 			uint16_t proto;
 			unsigned char hdr[18];
 		} ppp;
+		struct {
+			unsigned char pad[24];
+			unsigned char hdr[8];
+		} cpsnx;
 	};
 	unsigned char data[];
 };
