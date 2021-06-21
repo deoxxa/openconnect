@@ -59,8 +59,6 @@ static const char CCCclientRequestClientHello[] = "(CCCclientRequest\n\
     )\n\
 )";
 
-static const char client_type_trac[] = "TRAC";
-
 static const char CCCclientRequestUserPass[] = "(CCCclientRequest\n\
     :RequestHeader (\n\
         :id (2)\n\
@@ -68,7 +66,7 @@ static const char CCCclientRequestUserPass[] = "(CCCclientRequest\n\
         :session_id ()\n\
     )\n\
     :RequestData (\n\
-        :client_type (%s)\n";
+        :client_type (TRAC)\n";
 
 static const char CCCclientRequestCert[] = "(CCCclientRequest\n\
     :RequestHeader (\n\
@@ -674,9 +672,12 @@ static int do_ccc_client_hello(struct openconnect_info *vpninfo)
                     if (!opt->key)
                         continue;
                     if (!strcmp(opt->key, "connect_with_certificate_url")) {
-			    if (strcmp(opt->value, "/clients/cert/")) {
-				    /* FIXME: save this somewhere (probably vpninfo->urlpath, like GPST does) */
+			    if (strcmp(opt->value, "/clients/cert/"))
 				    vpn_progress(vpninfo, PRG_DEBUG, _("Non-standard connect_with_certificate_url: %s\n"), opt->value);
+			    /* XX: If we're using a client cert, subsequent requests need to use this endpoint */
+			    if (vpninfo->certinfo[0].cert) {
+				    vpninfo->redirect_url = strdup(opt->value);
+				    handle_redirect(vpninfo); /* FIXME: check errors */
 			    }
                     } else if (!strcmp(opt->key, "cookie_name")) {
                         /* XX: it's not clear that we ever need to use this value */
@@ -808,53 +809,40 @@ static int handle_login_reply(const char*data, struct openconnect_info *vpninfo)
 
 static int do_get_cookie(struct openconnect_info *vpninfo)
 {
-    const char *urlpath = NULL;
     char *resp_buf = NULL;
     struct oc_text_buf *request_body = buf_alloc();
     int result = 1;
 
-    if (vpninfo->cookie) {
-        FREE_PASS(vpninfo->cookie);
+    struct oc_auth_form *form = get_user_creds(vpninfo);
+    if (!form) {
+	    result = 0;
+	    goto out;
+    }
+    if (vpninfo->certinfo[0].cert) {
+	    /* XX: we've already set urlpath to the server's connect_with_certificate_url */
+	    buf_append(request_body, CCCclientRequestCert);
+    } else {
+	    buf_append(request_body, CCCclientRequestUserPass);
+	    struct oc_form_opt *opt;
+	    for (opt = form->opts; opt; opt = opt->next) {
+		    buf_append(request_body, "        :%s (", opt->name);
+		    buf_append_scrambled(request_body, opt->_value);
+		    buf_append(request_body, ")\n");
+	    }
+	    buf_append(request_body, "    )\n)");
+	    free_auth_form(form);
     }
 
-    if (result > 0) {
-        if (vpninfo->certinfo[0].cert) {
-            /* FIXME: save this somewhere (if it ever turns out to vary) */
-            urlpath = "/clients/cert/";
-            buf_append(request_body, CCCclientRequestCert);
-        } else {
-                struct oc_auth_form *form = get_user_creds(vpninfo);
-		urlpath = clients_str;
-		if (!form) {
-			result = 0;
-			goto out;
-		}
-		buf_append(request_body, CCCclientRequestUserPass, client_type_trac);
-		struct oc_form_opt *opt;
-		for (opt = form->opts; opt; opt = opt->next) {
-			buf_append(request_body, "        :%s (", opt->name);
-			buf_append_scrambled(request_body, opt->_value);
-			buf_append(request_body, ")\n");
-		}
-		buf_append(request_body, "    )\n)");
-		free_auth_form(form);
-		result = 1; /* needed to trigger request below */
-        }
+    if (buf_error(request_body))
+	    goto out;
 
-        if (request_body->pos) {
-            if (result) {
-                vpninfo->redirect_url = strdup(urlpath);
-                if ((result = handle_redirect(vpninfo)) >= 0)
-                    result = https_request_wrapper(vpninfo, request_body, &resp_buf, 0);
-            }
-            if (result > 0)
-                result = handle_login_reply(resp_buf, vpninfo);
-        }
-    }
-    buf_free(request_body);
-    FREE_PASS(resp_buf);
+    result = https_request_wrapper(vpninfo, request_body, &resp_buf, 0);
+    if (result > 0)
+	    result = handle_login_reply(resp_buf, vpninfo);
 
 out:
+    buf_free(request_body);
+    FREE_PASS(resp_buf);
     return result;
 }
 
