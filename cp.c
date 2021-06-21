@@ -1018,10 +1018,6 @@ static int snx_start_tunnel(struct openconnect_info *vpninfo)
     openconnect_close_https(vpninfo, 0);
 
     /* Try to open connection and send hello */
-    vpninfo->redirect_url = strdup("/");
-    if ((result = handle_redirect(vpninfo)) < 0)
-        return result;
-
     if (openconnect_open_https(vpninfo)) {
         vpninfo->quit_reason = "Failed to open HTTPS connection.";
         openconnect_close_https(vpninfo, 0);
