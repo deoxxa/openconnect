@@ -68,11 +68,7 @@ static const char CCCclientRequestUserPass[] = "(CCCclientRequest\n\
         :session_id ()\n\
     )\n\
     :RequestData (\n\
-        :client_type (%s)\n\
-        :username (%s)\n\
-        :password (%s)\n\
-    )\n\
-)";
+        :client_type (%s)\n";
 
 static const char CCCclientRequestCert[] = "(CCCclientRequest\n\
     :RequestHeader (\n\
@@ -802,127 +798,41 @@ static int send_client_hello_command(struct openconnect_info *vpninfo)
     return ret;
 }
 
-static int get_user_creds(struct openconnect_info *vpninfo)
+static struct oc_auth_form *get_user_creds(struct openconnect_info *vpninfo)
 {
     int ret;
-    char *user = NULL, *pwd = NULL, *userhash = NULL, *pwdhash = NULL;
-    char lt;
 
-    struct oc_auth_form mainform;
-    struct oc_form_opt_select ltselect;
+    struct oc_auth_form *form = calloc(1, sizeof(*form));
+    if (!form) {
+    nomem:
+	    free_auth_form(form);
+	    return NULL;
+    }
 
-    struct oc_choice ltvar[] = {
-        {.label = _("Username and password"), .name = (char*) "u"},
-        {.label = _("PinPad (SecurID)"), .name = (char*) "p"},
-        {.label = _("KeyFob (SecurID)"), .name = (char*) "k"},
-        {.label = _("Challenge Response"), .name = (char*) "c"},
-    };
+    struct oc_form_opt *opt = form->opts = calloc(1, sizeof(*opt));
+    if (!opt)
+	    goto nomem;
+    opt->name = strdup("username");
+    opt->label = strdup(_("Username (or Challenge Response):"));
+    opt->type = OC_FORM_OPT_TEXT;
 
-    struct oc_choice * oscptrs[] = {ltvar, ltvar + 1, ltvar + 2, ltvar + 3};
+    struct oc_form_opt *opt2 = opt->next = calloc(1, sizeof(*opt));
+    if (!opt2)
+	    goto nomem;
+    opt2->name = strdup("password");
+    opt2->label = strdup(_("Password, passcode, or PIN+tokencode (leave blank for Challenge Response):"));
+    opt2->type = OC_FORM_OPT_PASSWORD;
 
-    struct oc_form_opt opts[] = {
-        {.type = OC_FORM_OPT_TEXT, .name = (char *) "username", .label = _("Username:")},
-        {.type = OC_FORM_OPT_PASSWORD, .name = (char *) "password", .label = _("Password:")},
-        {.type = OC_FORM_OPT_PASSWORD, .name = (char *) "passcode", .label = _("Passcode:")},
-        {.type = OC_FORM_OPT_PASSWORD, .name = (char *) "tokencode", .label = _("Tokencode:")},
-        {.type = OC_FORM_OPT_PASSWORD, .name = (char *) "pin", .label = _("PIN:")},
-        {.type = OC_FORM_OPT_TEXT, .name = (char *) "challenge", .label = _("Challenge response:")},
+    form->auth_id = strdup("cp_creds");
+    form->message = strdup(_("Enter user credentials:"));
 
-    };
-    struct oc_form_opt *username, *password, *passcode, *pin, *tokencode, *challenge;
-
-    int i = 0;
-    username = &opts[i++];
-    password = &opts[i++];
-    passcode = &opts[i++]; /* pinpad */
-    pin = &opts[i++]; /*  keyfob */
-    tokencode = &opts[i++]; /* keyfob */
-    challenge = &opts[i++];
-
-    memset(&ltselect, 0, sizeof (ltselect));
-    memset(&mainform, 0, sizeof (mainform));
-
-    mainform.auth_id = (char *) "cp_login_opts";
-    mainform.opts = &ltselect.form;
-    mainform.authgroup_opt = &ltselect;
-    mainform.authgroup_selection = 0;
-    mainform.message = _("CheckPoint login options:");
-
-    ltselect.form.next = NULL;
-    ltselect.form.type = OC_FORM_OPT_SELECT;
-    ltselect.form.name = (char *) "login_type";
-    ltselect.form.label = (char *) _("Login type:");
-
-    ltselect.nr_choices = sizeof (oscptrs) / sizeof (*oscptrs);
-    ltselect.choices = oscptrs;
-
-    do {
-        ret = process_auth_form(vpninfo, &mainform);
-    } while (ret == OC_FORM_RESULT_NEWGROUP);
-
+    ret = process_auth_form(vpninfo, form);
     if (OC_FORM_RESULT_OK != ret) {
-        return 0; /* Cancel login */
+	    free_auth_form(form);
+	    return NULL;
     }
 
-    lt = ltselect.form._value[0];
-
-    memset(&mainform, 0, sizeof (mainform));
-
-    mainform.opts = username;
-
-    if (lt == 'u')
-        username->next = password;
-    else if (lt == 'p')
-        username->next = passcode;
-    else if (lt == 'k') {
-        username->next = pin;
-        pin->next = tokencode;
-    } else if (lt == 'c')
-        mainform.opts = challenge;
-    else
-        return 0;
-
-
-    mainform.auth_id = (char *) ("cp_creds");
-    mainform.message = _("Enter user credentials:");
-
-    ret = process_auth_form(vpninfo, &mainform);
-    if (OC_FORM_RESULT_OK != ret) {
-        return 0;
-    }
-
-    user = username->_value;
-    if (lt == 'u')
-        pwd = strdup(password->_value);
-    else if (lt == 'p')
-        pwd = strdup(passcode->_value);
-    else if (lt == 'k') {
-        char *spin = pin->_value;
-        char *stoken = tokencode->_value;
-        int lenpin = strlen(spin);
-        int lentok = strlen(stoken);
-        pwd = calloc(1, lenpin + lentok + 1);
-        strncpy(pwd, spin, lenpin);
-        strncpy(pwd + lenpin, stoken, lentok);
-    } else if (lt == 'c') {
-        user = challenge->_value;
-        pwd = strdup("");
-    }
-
-    if (lt != 'm') {
-        userhash = encode(user);
-        pwdhash = encode(pwd);
-        add_option(vpninfo, "username", userhash);
-        add_option(vpninfo, "password", pwdhash);
-    }
-
-    for (i = 0; i < sizeof (opts) / sizeof (*opts); i++)
-        free_pass(&opts[i]._value);
-
-    free_pass(&userhash);
-    free_pass(&pwdhash);
-    free_pass(&pwd);
-    return 1;
+    return form;
 }
 
 static int handle_login_reply(const char*data, struct openconnect_info *vpninfo)
@@ -963,7 +873,7 @@ static int handle_login_reply(const char*data, struct openconnect_info *vpninfo)
 
 static int do_get_cookie(struct openconnect_info *vpninfo)
 {
-    const char *user_hash = NULL, *pwd_hash = NULL, *urlpath = NULL;
+    const char *urlpath = NULL;
     char *resp_buf = NULL;
     struct oc_text_buf *request_body = buf_alloc();
     int result = get_gw_info(vpninfo);
@@ -981,16 +891,26 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
                 urlpath = "/clients/cert";
             buf_append(request_body, CCCclientRequestCert);
         } else {
-                result = get_user_creds(vpninfo);
-                user_hash = get_option(vpninfo, "username");
-                pwd_hash = get_option(vpninfo, "password");
-                urlpath = clients_str;
-                if (result > 0) {
-                    buf_append(request_body, CCCclientRequestUserPass, client_type_trac,
-                            user_hash, pwd_hash);
-                    set_option(vpninfo, "username", "");
-                    set_option(vpninfo, "password", "");
-                }
+                struct oc_auth_form *form = get_user_creds(vpninfo);
+		urlpath = clients_str;
+		if (!form) {
+			result = 0;
+			goto out;
+		}
+		buf_append(request_body, CCCclientRequestUserPass, client_type_trac);
+		struct oc_form_opt *opt;
+		for (opt = form->opts; opt; opt = opt->next) {
+			char *encval = encode(opt->_value);
+			if (!encval) {
+				result = -ENOMEM;
+				goto out;
+			}
+			buf_append(request_body, "        :%s (%s)\n", opt->name, encval);
+			free(encval);
+		}
+		buf_append(request_body, "    )\n)");
+		free_auth_form(form);
+		result = 1; /* needed to trigger request below */
         }
 
         if (request_body->pos) {
@@ -1017,6 +937,7 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
     } else
         FREE_PASS(vpninfo->cookie);
 
+out:
     return result;
 }
 
@@ -1100,11 +1021,11 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
     opt = cpo->elems;
     if (strstr(opt->key, "hello_reply")) {
 
-        /* Save versions, just in case */
+        /* Log version strings */
         opt = cpo_get(cpo, cpo_find_child(cpo, 0, "version"));
-        set_option(vpninfo, "slim_ver", opt->value);
+        vpn_progress(vpninfo, PRG_DEBUG, _("CheckPoint server version is %s\n"), opt->value);
         opt = cpo_get(cpo, cpo_find_child(cpo, 0, "protocol_version"));
-        set_option(vpninfo, "slim_proto_ver", opt->value);
+        vpn_progress(vpninfo, PRG_DEBUG, _("CheckPoint server protocol_version is %s\n"), opt->value);
 
         /* Timeouts setup */
         idx = cpo_find_child(cpo, 0, "timeouts");
@@ -1116,7 +1037,7 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
         /* IP, NS, routing info */
         OM_idx = idx = cpo_find_child(cpo, 0, "OM");
         opt = cpo_get(cpo, cpo_find_child(cpo, idx, "ipaddr"));
-        new_ip_info.addr = add_option_dup(&new_cstp_opts, "vna_ipaddr", opt->value, -1);
+        new_ip_info.addr = add_option_dup(&new_cstp_opts, "ipaddr", opt->value, -1);
         vpn_progress(vpninfo, PRG_DEBUG, _("Received internal Legacy IP address %s\n"), opt->value);
 
         idx = cpo_find_child(cpo, OM_idx, "dns_servers");
@@ -1125,13 +1046,13 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
             while ((i < 3) && cpo_elem_iter(cpo, idx, &ichild)) {
                 opt = cpo_get(cpo, ichild);
                 vpn_progress(vpninfo, PRG_DEBUG, _("Received DNS server %s\n"), opt->value);
-                new_ip_info.dns[i++] = add_option_dup(&new_cstp_opts, "vna_dns_srv", opt->value, -1);
+                new_ip_info.dns[i++] = add_option_dup(&new_cstp_opts, "DNS", opt->value, -1);
             }
         }
 
         opt = cpo_get(cpo, cpo_find_child(cpo, OM_idx, "dns_suffix"));
         if (opt->value && strlen(opt->value))
-            new_ip_info.domain = add_option_dup(&new_cstp_opts, "vna_dns_suff", opt->value, -1);
+            new_ip_info.domain = add_option_dup(&new_cstp_opts, "search", opt->value, -1);
 
         idx = cpo_find_child(cpo, OM_idx, "wins_servers");
         if (idx >= 0) {
@@ -1140,7 +1061,7 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
             while ((i < 3) && cpo_elem_iter(cpo, idx, &ichild)) {
                 opt = cpo_get(cpo, ichild);
                 vpn_progress(vpninfo, PRG_DEBUG, _("Received WINS server %s\n"), opt->value);
-                new_ip_info.nbns[i++] = add_option_dup(&new_cstp_opts, "vna_wins_srv", opt->value, -1);
+                new_ip_info.nbns[i++] = add_option_dup(&new_cstp_opts, "WINS", opt->value, -1);
             }
         }
         /* Note: optional.subnet not used. */
@@ -1154,20 +1075,9 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
             ret = install_vpn_opts(vpninfo, new_cstp_opts, &new_ip_info);
 
         if (ret < 0) {
+            /* new_ip_info is bad. Perhaps IP address changed? */
             free_optlist(new_cstp_opts);
             free_split_routes(&new_ip_info);
-            vpninfo->cstp_options = old_cstp_opts;
-        } else {
-            /* New ip_info is good. Merge old opts with new ones. */
-            struct oc_vpn_option *next, *opt = old_cstp_opts;
-
-            for (; opt; opt = next) {
-                if (strstr(opt->option, "vna_") != opt->option)
-                    add_option(vpninfo, opt->option, opt->value);
-
-                next = opt->next;
-            }
-            free_optlist(old_cstp_opts);
         }
     } else {
         const cp_option *code = cpo_get(cpo, cpo_find_child(cpo, 0, "code"));
