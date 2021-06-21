@@ -1128,9 +1128,11 @@ int cp_obtain_cookie(struct openconnect_info *vpninfo)
 
     int ret;
 
-    vpninfo->redirect_url = strdup(clients_str);
-    if ((ret = handle_redirect(vpninfo)) < 0)
-	    goto out;
+    /* XX: If the user has provided a non-empty urlpath, assume they know what they're
+     * doing and leave as-is.
+     */
+    if (!vpninfo->urlpath)
+	    vpninfo->urlpath = strdup("clients/");
     if ((ret = do_ccc_client_hello(vpninfo)) <= 0)
 	    goto out;
 
