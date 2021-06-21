@@ -676,7 +676,6 @@ static int do_ccc_client_hello(struct openconnect_info *vpninfo)
     if (result > 0) {
         cpo = cpo_parse(resp_buf);
         if (cpo) {
-            buf_truncate(buf);
             if (ccc_check_error(cpo, buf)) {
                 vpn_progress(vpninfo, PRG_ERR, _("Server returned error: '%s'\n"), buf->data);
                 result = -EIO;
@@ -686,30 +685,33 @@ static int do_ccc_client_hello(struct openconnect_info *vpninfo)
                 opt = get_from_rd(cpo, pv);
                 idx = cpo_get_index(cpo, opt);
                 opt = cpo_get(cpo, cpo_find_child(cpo, idx, pv));
+                vpn_progress(vpninfo, PRG_DEBUG, _("CheckPoint server protocol_version is %s\n"), opt->value);
                 set_option(vpninfo, pv, opt->value);
 
-                set_option(vpninfo, "ssl_port", get_option(vpninfo, "org_port"));
                 opt = get_from_rd(cpo, "connectivity_info");
                 idx = cpo_get_index(cpo, opt);
                 while (cpo_elem_iter(cpo, idx, &ichild)) {
                     opt = cpo_get(cpo, ichild);
                     if (!opt->key)
                         continue;
-                    if (!strcmp(opt->key, "connect_with_certificate_url"))
-                        set_option(vpninfo, "cert_url", opt->value);
-                    else if (!strcmp(opt->key, "cookie_name"))
-                        set_option(vpninfo, "ma_cookie_name", opt->value);
-                    else if (!strcmp(opt->key, "supported_data_tunnel_protocols"))
+                    if (!strcmp(opt->key, "connect_with_certificate_url")) {
+			    if (strcmp(opt->value, "/clients/cert/")) {
+				    /* FIXME: save this somewhere (probably vpninfo->urlpath, like GPST does) */
+				    vpn_progress(vpninfo, PRG_DEBUG, _("Non-standard connect_with_certificate_url: %s\n"), opt->value);
+			    }
+                    } else if (!strcmp(opt->key, "cookie_name")) {
+                        /* XX: it's not clear that we ever need to use this value */
+                        if (strcmp(opt->value, "CPCVPN_SESSION_ID"))
+                            vpn_progress(vpninfo, PRG_DEBUG, _("Non-standard cookie_name: %s\n"), opt->value);
+                    } else if (!strcmp(opt->key, "supported_data_tunnel_protocols"))
                         idx2 = cpo_get_index(cpo, opt);
                 }
                 if (idx2 > 0) {
                     ichild = -1;
-                    buf_truncate(buf);
                     while (cpo_elem_iter(cpo, idx2, &ichild)) {
                         opt = cpo_get(cpo, ichild);
-                        buf_append(buf, "%s ", opt->value);
+                        vpn_progress(vpninfo, PRG_DEBUG, _("supported_data_tunnel_protocols: %s\n"), opt->value);
                     }
-                    set_option(vpninfo, "tunnel_protocols", buf->data);
                 }
             }
         } else
@@ -725,16 +727,7 @@ static int do_ccc_client_hello(struct openconnect_info *vpninfo)
 
 static int get_gw_info(struct openconnect_info *vpninfo)
 {
-
-    char sport[6] = {};
     int result = 1;
-
-    if (!get_option(vpninfo, "org_hostname")) {
-        set_option(vpninfo, "org_hostname", vpninfo->hostname);
-        snprintf(sport, sizeof (sport), "%d", vpninfo->port);
-        set_option(vpninfo, "org_port", sport);
-        set_option(vpninfo, "org_urlpath", vpninfo->urlpath);
-    }
 
     if (!find_option(vpninfo, "protocol_version")) {
         vpninfo->redirect_url = strdup(clients_str);
@@ -851,10 +844,8 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
     if (result > 0) {
         int pv = atoi(get_option(vpninfo, "protocol_version"));
         if (vpninfo->certinfo[0].cert) {
-            if (pv >= 100)
-                urlpath = get_option(vpninfo, "cert_url");
-            else
-                urlpath = "/clients/cert";
+            /* FIXME: save this somewhere (if it ever turns out to vary) */
+            urlpath = "/clients/cert/";
             buf_append(request_body, CCCclientRequestCert);
         } else {
                 struct oc_auth_form *form = get_user_creds(vpninfo);
