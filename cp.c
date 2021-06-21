@@ -745,12 +745,17 @@ static int send_client_hello_command(struct openconnect_info *vpninfo)
     char *request_body = NULL;
     int proto_ver = 1;
     int client_ver = 1;
-    const char *cookie = get_option(vpninfo, "slim_cookie");
+    char *colon = strchr(vpninfo->cookie, ':'); /* slim_cookie:session_id */
 
-    if (asprintf(&request_body, client_hello, client_ver, proto_ver,
-            (reconnect ? vpninfo->ip_info.addr : "0.0.0.0"),
-            (reconnect ? "true" : "false"), cookie) < 0)
-        return -ENOMEM;
+    if (colon)
+	    *colon = '\0';
+    ret = asprintf(&request_body, client_hello, client_ver, proto_ver,
+		   (reconnect ? vpninfo->ip_info.addr : "0.0.0.0"),
+		   (reconnect ? "true" : "false"), vpninfo->cookie);
+    if (colon)
+	    *colon = ':';
+    if (ret <= 0)
+	    return -ENOMEM;
 
     ret = snx_send_command(vpninfo, request_body, 1);
     free(request_body);
@@ -797,7 +802,7 @@ static struct oc_auth_form *get_user_creds(struct openconnect_info *vpninfo)
 static int handle_login_reply(const char*data, struct openconnect_info *vpninfo)
 {
     int ret = -EINVAL;
-    struct oc_text_buf *error = buf_alloc();
+    struct oc_text_buf *buf = buf_alloc();
     cp_options *cpo = cpo_parse(data);
 
     if (!cpo) {
@@ -808,25 +813,30 @@ static int handle_login_reply(const char*data, struct openconnect_info *vpninfo)
         const struct cp_option *active_key = get_from_rd(cpo, "active_key");
         const struct cp_option *session_id = get_from_rd(cpo, "session_id");
 
-        if (ccc_check_error(cpo, error)) {
+        if (ccc_check_error(cpo, buf)) {
             const struct cp_option *ec = get_from_rd(cpo, "error_code");
-            vpn_progress(vpninfo, PRG_ERR, _("Received error during authentication: %s\n"), error->data);
+            vpn_progress(vpninfo, PRG_ERR, _("Received error during authentication: %s\n"), buf->data);
             if (!strcmp(ec->value, "101"))
                 ret = -EPERM;
         } else {
-            if (authn_status && (!strcmp(authn_status->value, "done") &&
-                    is_authenticated && (!strcmp(is_authenticated->value, "true")))) {
+            if (authn_status && !strcmp(authn_status->value, "done") &&
+		is_authenticated && !strcmp(is_authenticated->value, "true") &&
+		active_key && session_id) {
                 char *slim_cookie = unscramble(active_key->value);
-                set_option(vpninfo, "slim_cookie", slim_cookie);
-                set_option(vpninfo, "session_id", session_id->value);
-                FREE_PASS(slim_cookie);
+		buf_append(buf, "%s:%s", slim_cookie, session_id->value);
+		if (!buf_error(buf)) {
+			vpninfo->cookie = buf->data;
+			buf->data = NULL;
+		} else
+			ret = 0; /* FIXME: use OpenConnect-standard -errno pattern */
+		free(slim_cookie);
                 ret = 1;
             } else
                 vpn_progress(vpninfo, PRG_ERR, _("Unknown authentication error\n"));
         }
     }
     cpo_free(cpo);
-    buf_free(error);
+    buf_free(buf);
     return ret;
 }
 
@@ -878,17 +888,6 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
     }
     buf_free(request_body);
     FREE_PASS(resp_buf);
-
-    if (result > 0) {
-        if (!vpninfo->cookie) {
-            request_body = buf_alloc();
-            buf_append(request_body, "%s:%s", get_option(vpninfo, "slim_cookie"),
-                    get_option(vpninfo, "session_id"));
-            vpninfo->cookie = strdup(request_body->data);
-            buf_free(request_body);
-        }
-    } else
-        FREE_PASS(vpninfo->cookie);
 
 out:
     return result;
@@ -1108,11 +1107,6 @@ static int snx_start_tunnel(struct openconnect_info *vpninfo)
 
 static int do_reconnect(struct openconnect_info *vpninfo)
 {
-    /* In standard SNX mode cp_connect frees the cookie. Reconstruct is again */
-    if (!vpninfo->cookie)
-        if (asprintf(&vpninfo->cookie, "%s:%s", get_option(vpninfo, "slim_cookie"),
-                get_option(vpninfo, "session_id")) < 0)
-            return -ENOMEM;
     int result = ssl_reconnect(vpninfo);
     if (result) {
         vpninfo->quit_reason = "Server reconnect failed";
@@ -1199,7 +1193,6 @@ int cp_obtain_cookie(struct openconnect_info *vpninfo)
 
 int cp_connect(struct openconnect_info *vpninfo)
 {
-    char *tmp, *sid;
     int result = 1;
 
     if (!vpninfo->cookie || !strlen(vpninfo->cookie))
@@ -1212,21 +1205,6 @@ int cp_connect(struct openconnect_info *vpninfo)
         return result;
     }
 
-    /* Standard SNX cookie string: <cookie>:<sid> */
-    tmp = strstr(vpninfo->cookie, ":");
-    if (!tmp) {
-        return 1;
-    }
-    tmp[0] = 0;
-    set_option(vpninfo, "slim_cookie", vpninfo->cookie);
-
-    sid = tmp + 1;
-    tmp = strstr(sid, ":");
-    if (tmp) {
-        tmp[0] = 0;
-    }
-    set_option(vpninfo, "session_id", sid);
-    FREE_PASS(vpninfo->cookie);
     return snx_start_tunnel(vpninfo);
 
 }
@@ -1306,21 +1284,34 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 
 int cp_bye(struct openconnect_info *vpninfo, const char *reason)
 {
+    char *orig_path;
+    int result;
     struct oc_text_buf *request_body = buf_alloc();
     char *data = NULL;
+    char *colon = strchr(vpninfo->cookie, ':'); /* slim_cookie:session_id */
+
     if (vpninfo->ssl_fd != -1) {
         send_disconnect(vpninfo);
         openconnect_close_https(vpninfo, 0);
-
-        if (atoi(get_option(vpninfo, "protocol_version")) >= 100) {
-
-            vpninfo->redirect_url = strdup(clients_str);
-            if (handle_redirect(vpninfo) >= 0) {
-                buf_append(request_body, CCCclientRequestSignout, get_option(vpninfo, "session_id"));
-                https_request_wrapper(vpninfo, request_body, &data, 0);
-            }
-        }
     }
+
+    if (colon) {
+	    orig_path = vpninfo->urlpath;
+	    vpninfo->urlpath = strdup(clients_str);
+	    buf_append(request_body, CCCclientRequestSignout, colon + 1);
+	    if ((result = buf_error(request_body)))
+		    goto out;
+	    result = https_request_wrapper(vpninfo, request_body, &data, 0);
+	    free(vpninfo->urlpath);
+	    vpninfo->urlpath = orig_path;
+
+	    if (result < 0)
+		    vpn_progress(vpninfo, PRG_ERR, _("Logout failed.\n"));
+	    else
+		    vpn_progress(vpninfo, PRG_INFO, _("Logout successful.\n"));
+    }
+
+ out:
     free(data);
     buf_free(request_body);
     return 0;
