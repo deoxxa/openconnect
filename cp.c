@@ -305,13 +305,6 @@ static uint32_t strtoipv4(const char *ip)
     return ret;
 }
 
-static char* ipv4tostr(uint32_t ip_int)
-{
-    static char ret[INET_ADDRSTRLEN] = {0};
-    int32_t buf = htonl(ip_int);
-    return inet_ntop(AF_INET, &buf, ret, INET_ADDRSTRLEN) ? ret : NULL;
-}
-
 /* Authentication-related helpers. */
 static
 int enc_dec_table[] = {
@@ -1032,6 +1025,8 @@ static int gen_ranges(struct oc_ip_info *ip_info,
 {
 
     uint32_t ip = ip_min, imask, ip_low, ip_high;
+    char abuf[INET_ADDRSTRLEN];
+
     while (ip <= ip_max) {
         struct oc_split_include *inc;
         /* make mask that covers current ip range, but does not exceed it. */
@@ -1052,7 +1047,8 @@ static int gen_ranges(struct oc_ip_info *ip_info,
             return -ENOMEM;
 
         char *s;
-        if (asprintf(&s, "%s/%d", ipv4tostr(ip), 32 - imask) < 0) {
+        in_addr_t a = htonl(ip);
+        if (asprintf(&s, "%s/%d", inet_ntop(AF_INET, &a, abuf, sizeof(abuf)), 32 - imask) < 0) {
             free(inc);
             return -ENOMEM;
         }
