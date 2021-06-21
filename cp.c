@@ -559,43 +559,6 @@ static int cpo_get_index(const cp_options *cfg, const cp_option *opt)
     return opt - cfg->elems;
 }
 
-static struct oc_vpn_option *find_option(struct openconnect_info *vpninfo, const char *key)
-{
-    struct oc_vpn_option *opt = vpninfo->cstp_options;
-    struct oc_vpn_option *next;
-    for (; opt; opt = next) {
-        if (0 == strcmp(key, opt->option))
-            return opt;
-        next = opt->next;
-    }
-    return NULL;
-}
-
-static const char *get_option(struct openconnect_info *vpninfo, const char *key)
-{
-    struct oc_vpn_option *opt = find_option(vpninfo, key);
-    return opt ? opt->value : NULL;
-}
-
-static const char *add_option(struct openconnect_info *vpninfo, const char *key,
-        const char *val)
-{
-    return val?add_option_dup(&vpninfo->cstp_options, key, val, -1):NULL;
-}
-
-static const char *set_option(struct openconnect_info *vpninfo, const char *key,
-        const char *val)
-{
-    struct oc_vpn_option *opt = find_option(vpninfo, key);
-    if (opt) {
-        FREE_PASS(opt->value);
-        opt->value = strdup(val);
-    } else
-        return add_option(vpninfo, key, val);
-    return opt->value;
-}
-
-
 static int https_request_wrapper(struct openconnect_info *vpninfo, struct oc_text_buf *request_body,
         char **resp_buf, int rdrfetch)
 {
@@ -686,7 +649,6 @@ static int do_ccc_client_hello(struct openconnect_info *vpninfo)
                 idx = cpo_get_index(cpo, opt);
                 opt = cpo_get(cpo, cpo_find_child(cpo, idx, pv));
                 vpn_progress(vpninfo, PRG_DEBUG, _("CheckPoint server protocol_version is %s\n"), opt->value);
-                set_option(vpninfo, pv, opt->value);
 
                 opt = get_from_rd(cpo, "connectivity_info");
                 idx = cpo_get_index(cpo, opt);
@@ -722,19 +684,6 @@ static int do_ccc_client_hello(struct openconnect_info *vpninfo)
     free(resp_buf);
     if (result <= 0)
         vpninfo->quit_reason = "ClientHello request error";
-    return result;
-}
-
-static int get_gw_info(struct openconnect_info *vpninfo)
-{
-    int result = 1;
-
-    if (!find_option(vpninfo, "protocol_version")) {
-        vpninfo->redirect_url = strdup(clients_str);
-        if ((result = handle_redirect(vpninfo)) >= 0)
-            result = do_ccc_client_hello(vpninfo);
-
-    }
     return result;
 }
 
@@ -845,14 +794,13 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
     const char *urlpath = NULL;
     char *resp_buf = NULL;
     struct oc_text_buf *request_body = buf_alloc();
-    int result = get_gw_info(vpninfo);
+    int result = 1;
 
     if (vpninfo->cookie) {
         FREE_PASS(vpninfo->cookie);
     }
 
     if (result > 0) {
-        int pv = atoi(get_option(vpninfo, "protocol_version"));
         if (vpninfo->certinfo[0].cert) {
             /* FIXME: save this somewhere (if it ever turns out to vary) */
             urlpath = "/clients/cert/";
@@ -1182,29 +1130,29 @@ int cp_obtain_cookie(struct openconnect_info *vpninfo)
 {
 
     int ret;
+
+    vpninfo->redirect_url = strdup(clients_str);
+    if ((ret = handle_redirect(vpninfo)) < 0)
+	    goto out;
+    if ((ret = do_ccc_client_hello(vpninfo)) <= 0)
+	    goto out;
+
     do {
         ret = do_get_cookie(vpninfo);
         if (ret <= 0)
             break;
     } while (!vpninfo->cookie);
 
+ out:
     return ret <= 0;
 }
 
 int cp_connect(struct openconnect_info *vpninfo)
 {
-    int result = 1;
-
     if (!vpninfo->cookie || !strlen(vpninfo->cookie))
         return 1;
 
     vpninfo->ip_info.mtu = 1500; /* Fixed 4 now */
-
-    result = get_gw_info(vpninfo);
-    if (result < 0) {
-        return result;
-    }
-
     return snx_start_tunnel(vpninfo);
 
 }
