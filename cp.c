@@ -40,6 +40,7 @@ enum PACKET_TYPE {
 };
 
 static char clients_str[] = "/clients/";
+static char awaiting_hello_reply[] = "Awaiting hello_reply";
 
 /* CCC protocol commands */
 
@@ -121,7 +122,7 @@ static struct pkt *build_packet(int type, const void *data, int len)
     return p;
 }
 
-static int snx_send(struct openconnect_info *vpninfo, int sync)
+static int snx_send(struct openconnect_info *vpninfo)
 {
     struct pkt *p = vpninfo->current_ssl_pkt;
     int tot_len = p->len + sizeof (p->cpsnx.hdr);
@@ -134,10 +135,7 @@ static int snx_send(struct openconnect_info *vpninfo, int sync)
         dump_buf_hex(vpninfo, PRG_TRACE, '>', (void *) p->cpsnx.hdr, tot_len);
     }
 
-    if (sync)
-        ret = vpninfo->ssl_write(vpninfo, p->cpsnx.hdr, tot_len);
-    else
-        ret = ssl_nonblock_write(vpninfo, 0, p->cpsnx.hdr, tot_len);
+    ret = ssl_nonblock_write(vpninfo, 0, p->cpsnx.hdr, tot_len);
     /* Resend only if ret == 0! */
     if (ret != 0) {
         FREE(vpninfo->current_ssl_pkt);
@@ -175,7 +173,7 @@ static char *hide_auth_data(const char *data)
 }
 #endif
 
-static int snx_send_command(struct openconnect_info *vpninfo, const char*cmd, int sync)
+static int snx_send_command(struct openconnect_info *vpninfo, const char*cmd)
 {
     int len = strlen(cmd) + 1;
     vpninfo->current_ssl_pkt = build_packet(CMD, cmd, len);
@@ -184,19 +182,14 @@ static int snx_send_command(struct openconnect_info *vpninfo, const char*cmd, in
 #else
     if (vpninfo->verbose >= PRG_DEBUG) {
         char *cmd_print = hide_auth_data(cmd);
-        vpn_progress(vpninfo, PRG_DEBUG, _("Command outgoing (sync=%d):\n%s\n"), sync, cmd_print);
+        vpn_progress(vpninfo, PRG_DEBUG, _("Command outgoing:\n%s\n"), cmd_print);
         free(cmd_print);
     }
 #endif
-    return snx_send(vpninfo, sync);
+    return snx_send(vpninfo);
 }
 
-static int snx_send_packet(struct openconnect_info *vpninfo)
-{
-    return snx_send(vpninfo, 0);
-}
-
-static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type, int sync) {
+static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type) {
     static const int hdr_len = 8;
     int ret;
     uint8_t *buf;
@@ -211,11 +204,8 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type, int sync)
     /* Read header */
     if (pkt->len == 0) {
         int len_rec = hdr_len - vpninfo->partial_rec_size;
-        buf = pkt->cpsnx.hdr + vpninfo->partial_rec_size;
-        if (sync)
-            ret = vpninfo->ssl_read(vpninfo, (char *) buf, len_rec);
-        else
-            ret = ssl_nonblock_read(vpninfo, 0, buf, len_rec);
+        buf = pkt->cstp.hdr + vpninfo->partial_rec_size;
+        ret = ssl_nonblock_read(vpninfo, 0, buf, len_rec);
 
         if (ret < 0) {
             /* Exit immediately on error. */
@@ -244,10 +234,7 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type, int sync)
     int payload_len = pkt->len - vpninfo->partial_rec_size;
     buf = pkt->data + vpninfo->partial_rec_size;
 
-    if (sync)
-        ret = vpninfo->ssl_read(vpninfo, (char*) buf, payload_len);
-    else
-        ret = ssl_nonblock_read(vpninfo, 0, buf, payload_len);
+    ret = ssl_nonblock_read(vpninfo, 0, buf, payload_len);
 
     if (ret < 0) {
         FREE(vpninfo->cstp_pkt);
@@ -285,11 +272,6 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type, int sync)
         }
     }
     return ret;
-}
-
-static int send_KA(struct openconnect_info *vpninfo, int sync)
-{
-    return snx_send_command(vpninfo, keepalive, sync);
 }
 
 /* NOTE: Legacy IP versions */
@@ -717,7 +699,7 @@ static int send_client_hello_command(struct openconnect_info *vpninfo)
     if (ret <= 0)
 	    return -ENOMEM;
 
-    ret = snx_send_command(vpninfo, request_body, 1);
+    ret = snx_send_command(vpninfo, request_body);
     free(request_body);
     return ret;
 }
@@ -911,7 +893,7 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
     int ichild = -1;
     int i, ret = -EINVAL, idx, OM_idx, range_idx;
     const cp_option *opt;
-    struct oc_vpn_option *old_cstp_opts = NULL, *new_cstp_opts = NULL;
+    struct oc_vpn_option *new_cstp_opts = NULL;
     struct oc_ip_info new_ip_info = {};
     cp_options *cpo = cpo_parse(data);
 
@@ -965,7 +947,6 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
         /* Note: optional.subnet not used. */
 
         range_idx = cpo_find_child(cpo, 0, "range");
-        old_cstp_opts = vpninfo->cstp_options;
         vpninfo->cstp_options = NULL;
         if (range_idx >= 0)
             ret = handle_ip_ranges(vpninfo, new_cstp_opts, &new_ip_info, cpo, range_idx);
@@ -995,7 +976,7 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
 
 static int snx_start_tunnel(struct openconnect_info *vpninfo)
 {
-    int result, ptype;
+    int result;
     openconnect_close_https(vpninfo, 0);
 
     /* Try to open connection and send hello */
@@ -1012,32 +993,7 @@ static int snx_start_tunnel(struct openconnect_info *vpninfo)
         return -EIO;
     }
 
-    /* Process hello reply */
-    ptype = -1;
-    do {
-        result = snx_receive(vpninfo, &ptype, 1);
-    } while (result == -EAGAIN);
-
-    if (ptype != CMD) {
-        FREE(vpninfo->cstp_pkt);
-        vpninfo->quit_reason = "Received packet with wrong type.";
-        openconnect_close_https(vpninfo, 0);
-        return -EIO;
-    }
-
-    result = handle_hello_reply((char*) vpninfo->cstp_pkt->data, vpninfo);
-    FREE(vpninfo->cstp_pkt);
-
-    if (result < 0) {
-        vpninfo->quit_reason = "Error while processing hello_reply.";
-        openconnect_close_https(vpninfo, 0);
-        return result;
-    }
-
-    if (send_KA(vpninfo, 1) < 0) {
-        vpninfo->quit_reason = "Failed to send initial KA.";
-        return -EIO;
-    }
+    vpninfo->delay_tunnel_reason = awaiting_hello_reply;
 
     vpninfo->ssl_times.last_rekey = vpninfo->ssl_times.last_rx = vpninfo->ssl_times.last_tx = time(NULL);
 
@@ -1163,7 +1119,7 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
     /* Service one incoming packet. */
     if (readable) {
         int ptype = -1;
-        result = snx_receive(vpninfo, &ptype, 0);
+        result = snx_receive(vpninfo, &ptype);
         if (result == -ENOMEM) {
             return result;
         }
@@ -1186,6 +1142,11 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
         }
     }
 
+    if (!vpninfo->ip_info.addr) {
+        vpninfo->delay_tunnel_reason = awaiting_hello_reply;
+        return 0;
+    }
+
     /* Service one outgoing packet. */
 
     if (!vpninfo->current_ssl_pkt) {
@@ -1199,7 +1160,7 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 
     if (vpninfo->current_ssl_pkt) {
 
-        if ((result = snx_send_packet(vpninfo)) < 0)
+        if ((result = snx_send(vpninfo)) < 0)
             /* Try to reconnect on error */
             return do_reconnect(vpninfo);
         ret += result;
@@ -1211,7 +1172,7 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
         case KA_DPD:
         case KA_KEEPALIVE:
         {
-            if ((result = send_KA(vpninfo, 0)) < 0)
+            if ((result = snx_send_command(vpninfo, keepalive)) < 0)
                 /* Try to reconnect on error */
                 return do_reconnect(vpninfo);
             ret += result;
@@ -1235,7 +1196,7 @@ int cp_bye(struct openconnect_info *vpninfo, const char *reason)
     char *colon = strchr(vpninfo->cookie, ':'); /* slim_cookie:session_id */
 
     if (vpninfo->ssl_fd != -1) {
-        snx_send_command(vpninfo, disconnect, 0);
+        snx_send_command(vpninfo, disconnect);
         openconnect_close_https(vpninfo, 0);
     }
 
