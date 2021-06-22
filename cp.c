@@ -257,11 +257,11 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type) {
                     payload_len);
             dump_buf_hex(vpninfo, PRG_TRACE, '<', (void *) &vpninfo->cstp_pkt->cpsnx.hdr, payload_len + hdr_len);
         } else if (*pkt_type == CMD) {
-	    char *cmd = (char *) vpninfo->cstp_pkt->data;
-	    /* XX: hide_auth_data, snx_handle_command, and vpn_progress (immediately below)
-	     * all assume this is a null-terminated command. We need to ensure that it is.
-	     */
-	    cmd[vpninfo->cstp_pkt->len - 1] = '\0';
+            char *cmd = (char *) vpninfo->cstp_pkt->data;
+            /* XX: hide_auth_data, snx_handle_command, and vpn_progress (immediately below)
+             * all assume this is a null-terminated command. We need to ensure that it is.
+             */
+            cmd[vpninfo->cstp_pkt->len - 1] = '\0';
 #ifdef INSECURE_DEBUGGING
             vpn_progress(vpninfo, PRG_DEBUG, _("Command received:\n%s\n"), cmd);
 #else
@@ -647,13 +647,13 @@ static int do_ccc_client_hello(struct openconnect_info *vpninfo)
                     if (!opt->key)
                         continue;
                     if (!strcmp(opt->key, "connect_with_certificate_url")) {
-			    if (strcmp(opt->value, "/clients/cert/"))
-				    vpn_progress(vpninfo, PRG_DEBUG, _("Non-standard connect_with_certificate_url: %s\n"), opt->value);
-			    /* XX: If we're using a client cert, subsequent requests need to use this endpoint */
-			    if (vpninfo->certinfo[0].cert) {
-				    vpninfo->redirect_url = strdup(opt->value);
-				    handle_redirect(vpninfo); /* FIXME: check errors */
-			    }
+                        if (strcmp(opt->value, "/clients/cert/"))
+                            vpn_progress(vpninfo, PRG_DEBUG, _("Non-standard connect_with_certificate_url: %s\n"), opt->value);
+                        /* XX: If we're using a client cert, subsequent requests need to use this endpoint */
+                        if (vpninfo->certinfo[0].cert) {
+                            vpninfo->redirect_url = strdup(opt->value);
+                            handle_redirect(vpninfo); /* FIXME: check errors */
+                        }
                     } else if (!strcmp(opt->key, "cookie_name")) {
                         /* XX: it's not clear that we ever need to use this value */
                         if (strcmp(opt->value, "CPCVPN_SESSION_ID"))
@@ -765,13 +765,13 @@ static int handle_login_reply(const char*data, struct openconnect_info *vpninfo)
 		is_authenticated && !strcmp(is_authenticated->value, "true") &&
 		active_key && session_id) {
                 char *slim_cookie = unscramble(active_key->value);
-		buf_append(buf, "%s:%s", slim_cookie, session_id->value);
-		if (!buf_error(buf)) {
-			vpninfo->cookie = buf->data;
-			buf->data = NULL;
-		} else
-			ret = 0; /* FIXME: use OpenConnect-standard -errno pattern */
-		free(slim_cookie);
+                buf_append(buf, "%s:%s", slim_cookie, session_id->value);
+                if (!buf_error(buf)) {
+                    vpninfo->cookie = buf->data;
+                    buf->data = NULL;
+                } else
+                    ret = 0; /* FIXME: use OpenConnect-standard -errno pattern */
+                free(slim_cookie);
                 ret = 1;
             } else
                 vpn_progress(vpninfo, PRG_ERR, _("Unknown authentication error\n"));
