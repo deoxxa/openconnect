@@ -788,34 +788,32 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
     struct oc_text_buf *request_body = buf_alloc();
     int result = 1;
 
-    struct oc_auth_form *form = get_user_creds(vpninfo);
-    if (!form) {
-	    result = 0;
-	    goto out;
-    }
+
     if (vpninfo->certinfo[0].cert) {
-	    /* XX: we've already set urlpath to the server's connect_with_certificate_url */
-	    buf_append(request_body, CCCclientRequestCert);
+        /* XX: we've already set urlpath to the server's connect_with_certificate_url */
+        buf_append(request_body, CCCclientRequestCert);
     } else {
-	    buf_append(request_body, CCCclientRequestUserPass);
-	    struct oc_form_opt *opt;
-	    for (opt = form->opts; opt; opt = opt->next) {
-		    buf_append(request_body, "        :%s (", opt->name);
-		    buf_append_scrambled(request_body, opt->_value);
-		    buf_append(request_body, ")\n");
-	    }
-	    buf_append(request_body, "    )\n)");
-	    free_auth_form(form);
+        struct oc_auth_form *form = get_user_creds(vpninfo);
+        if (!form) {
+            result = 0;
+        } else {
+            buf_append(request_body, CCCclientRequestUserPass);
+            struct oc_form_opt *opt;
+            for (opt = form->opts; opt; opt = opt->next) {
+                buf_append(request_body, "        :%s (", opt->name);
+                buf_append_scrambled(request_body, opt->_value);
+                buf_append(request_body, ")\n");
+            }
+            buf_append(request_body, "    )\n)");
+            free_auth_form(form);
+        }
     }
 
-    if (buf_error(request_body))
-	    goto out;
-
-    result = https_request_wrapper(vpninfo, request_body, &resp_buf, 0);
-    if (result > 0)
-	    result = handle_login_reply(resp_buf, vpninfo);
-
-out:
+    if (result && !buf_error(request_body)) {
+        result = https_request_wrapper(vpninfo, request_body, &resp_buf, 0);
+        if (result > 0)
+            result = handle_login_reply(resp_buf, vpninfo);
+    }
     buf_free(request_body);
     FREE_PASS(resp_buf);
     return result;
