@@ -177,7 +177,7 @@ struct pkt {
 			unsigned char hdr[18];
 		} ppp;
 		struct {
-			unsigned char pad[24];
+			unsigned char pad[16];
 			unsigned char hdr[8];
 		} cpsnx;
 	};
