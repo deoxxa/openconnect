@@ -178,7 +178,7 @@ static int snx_send_command(struct openconnect_info *vpninfo, const char*cmd)
     int len = strlen(cmd) + 1;
     vpninfo->current_ssl_pkt = build_packet(CMD, cmd, len);
 #ifdef INSECURE_DEBUGGING
-    vpn_progress(vpninfo, PRG_DEBUG, _("Command outgoing (sync=%d)\n%s\n"), sync, cmd);
+    vpn_progress(vpninfo, PRG_DEBUG, _("Command outgoing\n%s\n"), cmd);
 #else
     if (vpninfo->verbose >= PRG_DEBUG) {
         char *cmd_print = hide_auth_data(cmd);
