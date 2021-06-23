@@ -968,7 +968,8 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
             /* new_ip_info is bad. Perhaps IP address changed? */
             free_optlist(new_cstp_opts);
             free_split_routes(&new_ip_info);
-        }
+        } else
+	    vpninfo->ssl_times.last_rekey = time(NULL);
     } else {
         const cp_option *code = cpo_get(cpo, cpo_find_child(cpo, 0, "code"));
         const cp_option *msg = cpo_get(cpo, cpo_find_child(cpo, 0, "message"));
@@ -1004,9 +1005,11 @@ static int snx_start_tunnel(struct openconnect_info *vpninfo)
         return -EIO;
     }
 
+    /* XX: We'll (ab)use last_rekey by leaving it zero until hello_reply is received */
+    vpninfo->ssl_times.last_rekey = 0;
     vpninfo->delay_tunnel_reason = awaiting_hello_reply;
 
-    vpninfo->ssl_times.last_rekey = vpninfo->ssl_times.last_rx = vpninfo->ssl_times.last_tx = time(NULL);
+    vpninfo->ssl_times.last_rx = vpninfo->ssl_times.last_tx = time(NULL);
 
     monitor_fd_new(vpninfo, ssl);
     monitor_read_fd(vpninfo, ssl);
@@ -1141,6 +1144,18 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
                 return do_reconnect(vpninfo);
 
             ret += result;
+
+	    /* FIXME: make this control flow / exception-handling saner */
+	    if (vpninfo->ssl_times.last_rekey == 0) {
+		    if (ptype != CMD || strncmp((const char *)vpninfo->cstp_pkt->data, "(hello_reply", 12)) {
+			    vpn_progress(vpninfo, PRG_ERR, _("Unexpected packet received prior to hello_reply, ignoring\n"));
+			    dump_buf_hex(vpninfo, PRG_ERR, '<', (void *) &vpninfo->cstp_pkt->cpsnx.hdr, 8 + vpninfo->cstp_pkt->len);
+			    free(vpninfo->cstp_pkt);
+			    vpninfo->delay_tunnel_reason = awaiting_hello_reply;
+			    return 0;
+		    }
+	    }
+
             if (ptype == CMD) {
                 if (snx_handle_command(vpninfo))
                     /* Server-side disconnect. Should exit. */
@@ -1151,11 +1166,6 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
             } else
                 vpn_progress(vpninfo, PRG_INFO, _("Unknown packet of type %d, ignoring.\n"), ptype);
         }
-    }
-
-    if (!vpninfo->ip_info.addr) {
-        vpninfo->delay_tunnel_reason = awaiting_hello_reply;
-        return 0;
     }
 
     /* Service one outgoing packet. */
