@@ -1171,6 +1171,9 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
     if (vpninfo->ssl_fd == -1)
         return do_reconnect(vpninfo);
 
+    if (vpninfo->ssl_times.last_rekey == 0)
+        vpninfo->delay_tunnel_reason = awaiting_hello_reply;
+
     /* Service one incoming packet. */
     if (readable) {
         int ptype = -1;
