@@ -247,7 +247,7 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type) {
         return -EAGAIN;
     }
 
-    /* We have finally recieved full packet */
+    /* We have finally received full packet */
     vpninfo->partial_rec_size = 0;
     vpninfo->ssl_times.last_rx = time(NULL);
 
