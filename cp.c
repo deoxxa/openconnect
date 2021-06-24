@@ -116,6 +116,8 @@ static const char disconnect[] = "(disconnect\n\
 static struct pkt *build_packet(int type, const void *data, int len)
 {
     struct pkt *p = calloc(1, sizeof (struct pkt) +len);
+    if (!p)
+        return NULL;
     p->len = len;
     store_be32(p->cpsnx.hdr + 4, type);
     memcpy(p->data, data, len);
@@ -152,6 +154,9 @@ static char *hide_auth_data(const char *data)
     char *val_start, *val_end, *ret = strdup(data);
     const char *fld, *fld_start;
     int i;
+    if (!ret)
+        return NULL;
+
     for (i = 0; i < sizeof (excl_fields) / sizeof (*excl_fields); i++) {
         fld = excl_fields[i];
         fld_start = ret;
@@ -177,6 +182,8 @@ static int snx_send_command(struct openconnect_info *vpninfo, const char*cmd)
 {
     int len = strlen(cmd) + 1;
     vpninfo->current_ssl_pkt = build_packet(CMD, cmd, len);
+    if (!vpninfo->current_ssl_pkt)
+        return -ENOMEM;
 #ifdef INSECURE_DEBUGGING
     vpn_progress(vpninfo, PRG_DEBUG, _("Command outgoing\n%s\n"), cmd);
 #else
@@ -348,9 +355,11 @@ static char *unscramble(char *s)
     char *ret = malloc(retlen + 1);
 
     if (!ret)
-	    return NULL;
-    else if (slen & 1)
-	    return NULL;
+        return NULL;
+    else if (slen & 1) {
+        FREE_PASS(ret);
+        return NULL;
+    }
 
     for (i = 0; i < retlen; i++)
 	    ret[i] = enc_dec_ichr(i, unhex(s + slen - 2 - (i << 1)));
@@ -380,7 +389,8 @@ typedef struct cp_options cp_options;
 static cp_options *cpo_init(int ne)
 {
     cp_options *cfg = (cp_options *) calloc(1, sizeof (cp_options) + ne * sizeof (cp_option));
-    cfg->len = ne;
+    if (cfg)
+        cfg->len = ne;
     return cfg;
 }
 
@@ -477,36 +487,38 @@ static cp_options *cpo_parse(const char *input)
     size_t full_len = strlen(input);
     if (full_len < 3)
         return NULL;
-    char *key, *data = strdup(input);
-    const char *dataend = data + full_len - 1;
 
     /* Count number of elements in input data which is equal to the amount
      * of ':' characters in the input string.*/
 
-    char *next = data;
+    const char *ptr = input;
     cp_options *cfg;
-    int nelem, nextidx, ok;
-    for (nelem = 0; (next = strchr(next, ':')); nelem++, next++);
+    int nelem, nextidx, ok = 0;
+    for (nelem = 0; (ptr = strchr(ptr, ':')); nelem++, ptr++);
 
     cfg = cpo_init(nelem + 1);
-    cfg->rawdata = data;
-
-    next = data;
-    key = next + 1; /* Drop leading '(' */
-    cfg->elems[0].key = key;
-    next = strchr(key, '\n');
-    nextidx = 1;
-    ok = next != NULL;
-
-    /* Do recursive parsing */
-    if (ok) {
-        key[next - key] = 0;
-        next++;
-        while ((ok = cpo_parse_elem(cfg, &next, 0, &nextidx))&&(next < dataend));
-    }
-    if (!ok) {
-        cpo_free(cfg);
-        cfg = 0;
+    if (cfg) {
+        char *key, *next, *data = strdup(input);
+        if (data) {
+            const char *dataend = data + full_len - 1;
+            cfg->rawdata = data;
+            next = data;
+            key = next + 1; /* Drop leading '(' */
+            cfg->elems[0].key = key;
+            next = strchr(key, '\n');
+            nextidx = 1;
+            ok = next != NULL;
+            /* Do recursive parsing */
+            if (ok) {
+                key[next - key] = 0;
+                next++;
+                while ((ok = cpo_parse_elem(cfg, &next, 0, &nextidx))&&(next < dataend));
+            }
+        }
+        if (!ok) {
+            cpo_free(cfg);
+            cfg = NULL;
+        }
     }
     return cfg;
 }
@@ -531,6 +543,8 @@ static int cpo_elem_iter(const cp_options *cfg, int iparent, int *i)
 {
 
     int found = 0;
+    if (iparent < 0)
+        return found;
     if (*i < 0)
         *i = iparent;
     else
@@ -553,7 +567,7 @@ static const cp_option *cpo_get(const cp_options *cfg, int i)
 
 static int cpo_get_index(const cp_options *cfg, const cp_option *opt)
 {
-    return opt - cfg->elems;
+    return opt ? opt - cfg->elems : -1;
 }
 
 static int https_request_wrapper(struct openconnect_info *vpninfo, struct oc_text_buf *request_body,
@@ -613,7 +627,10 @@ static int ccc_check_error(const cp_options *cpo, struct oc_text_buf *s)
                 msg = error_msg->value;
         }
         buf_append(s, "%s (code %s)", msg ? msg : "", error_code ? error_code->value : return_code->value);
-        ret = 1;
+        if (buf_error(s))
+            ret = -ENOMEM;
+        else
+            ret = -EIO;
     }
     if (!error_msg)
         free(msg);
@@ -637,14 +654,14 @@ static int do_ccc_client_hello(struct openconnect_info *vpninfo)
 
     /* NOTE: client version fixed for now. */
     buf_append(buf, CCCclientRequestClientHello, 0, gw ? gw : "");
-
-    result = https_request_wrapper(vpninfo, buf, &resp_buf, 0);
+    if (!(result = buf_error(buf)))
+        result = https_request_wrapper(vpninfo, buf, &resp_buf, 0);
     if (result > 0) {
         cpo = cpo_parse(resp_buf);
         if (cpo) {
-            if (ccc_check_error(cpo, buf)) {
-                vpn_progress(vpninfo, PRG_ERR, _("Server returned error: '%s'\n"), buf->data);
-                result = -EIO;
+            if ((result = ccc_check_error(cpo, buf))) {
+                if (result != -ENOMEM)
+                    vpn_progress(vpninfo, PRG_ERR, _("Server returned error: '%s'\n"), buf->data);
             } else {
                 /* Extract usefull info */
 
@@ -768,24 +785,30 @@ static int handle_login_reply(const char*data, struct openconnect_info *vpninfo)
         const struct cp_option *active_key = get_from_rd(cpo, "active_key");
         const struct cp_option *session_id = get_from_rd(cpo, "session_id");
 
-        if (ccc_check_error(cpo, buf)) {
+        if ((ret = ccc_check_error(cpo, buf))) {
             const struct cp_option *ec = get_from_rd(cpo, "error_code");
-            vpn_progress(vpninfo, PRG_ERR, _("Received error during authentication: %s\n"), buf->data);
+            if (ret != -ENOMEM)
+                vpn_progress(vpninfo, PRG_ERR, _("Received error during authentication: %s\n"), buf->data);
             if (!strcmp(ec->value, "101"))
                 ret = -EPERM;
         } else {
             if (authn_status && !strcmp(authn_status->value, "done") &&
-		is_authenticated && !strcmp(is_authenticated->value, "true") &&
-		active_key && session_id) {
+                is_authenticated && !strcmp(is_authenticated->value, "true") &&
+                active_key && session_id) {
                 char *slim_cookie = unscramble(active_key->value);
-                buf_append(buf, "%s:%s", slim_cookie, session_id->value);
-                if (!buf_error(buf)) {
-                    vpninfo->cookie = buf->data;
-                    buf->data = NULL;
-                } else
-                    ret = 0; /* FIXME: use OpenConnect-standard -errno pattern */
+
+                if (!slim_cookie)
+                    ret = -ENOMEM;
+                else {
+                    buf_append(buf, "%s:%s", slim_cookie, session_id->value);
+                    if (!buf_error(buf)) {
+                        vpninfo->cookie = buf->data;
+                        buf->data = NULL;
+                        ret = 1;
+                    } else
+                        ret = 0; /* FIXME: use OpenConnect-standard -errno pattern */
+                }
                 free(slim_cookie);
-                ret = 1;
             } else
                 vpn_progress(vpninfo, PRG_ERR, _("Unknown authentication error\n"));
         }
@@ -799,7 +822,7 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
 {
     char *resp_buf = NULL;
     struct oc_text_buf *request_body = buf_alloc();
-    int result = 1;
+    int result = 0;
 
 
     if (vpninfo->certinfo[0].cert) {
@@ -808,7 +831,7 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
     } else {
         struct oc_auth_form *form = get_user_creds(vpninfo);
         if (!form) {
-            result = 0;
+            result = -EINVAL;
         } else {
             buf_append(request_body, CCCclientRequestUserPass);
             struct oc_form_opt *opt;
@@ -819,10 +842,11 @@ static int do_get_cookie(struct openconnect_info *vpninfo)
             }
             buf_append(request_body, "    )\n)");
             free_auth_form(form);
+            result = buf_error(request_body);
         }
     }
 
-    if (result && !buf_error(request_body)) {
+    if (!result) {
         result = https_request_wrapper(vpninfo, request_body, &resp_buf, 0);
         if (result > 0)
             result = handle_login_reply(resp_buf, vpninfo);
@@ -860,7 +884,7 @@ static int gen_ranges(struct oc_ip_info *ip_info,
 
         char *s;
         in_addr_t a = htonl(ip);
-        if (asprintf(&s, "%s/%d", inet_ntop(AF_INET, &a, abuf, sizeof(abuf)), 32 - imask) < 0) {
+        if (asprintf(&s, "%s/%d", inet_ntop(AF_INET, &a, abuf, sizeof (abuf)), 32 - imask) <= 0) {
             free(inc);
             return -ENOMEM;
         }
@@ -884,14 +908,17 @@ static int handle_ip_ranges(struct openconnect_info *vpninfo, struct oc_vpn_opti
 
         from_elem = cpo_get(cpo, cpo_find_child(cpo, ichild, "from"));
         to_elem = cpo_get(cpo, cpo_find_child(cpo, ichild, "to"));
-        vpn_progress(vpninfo, PRG_DEBUG, _("Received Legacy IP address range %s:%s\n"),
-                from_elem->value, to_elem->value);
+        if (!from_elem || !to_elem)
+            continue;
 
         from_ip_int = strtoipv4(from_elem->value);
         to_ip_int = strtoipv4(to_elem->value);
 
         if (from_ip_int == gw_ip_int)
             continue;
+
+        vpn_progress(vpninfo, PRG_DEBUG, _("Received Legacy IP address range %s:%s\n"),
+                from_elem->value, to_elem->value);
 
         if ((ret = gen_ranges(ip_info, from_ip_int, to_ip_int)) < 0)
             break;
@@ -921,15 +948,17 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
         /* Timeouts setup */
         idx = cpo_find_child(cpo, 0, "timeouts");
         opt = cpo_get(cpo, cpo_find_child(cpo, idx, "keepalive"));
-        vpninfo->ssl_times.keepalive = MAX(10, atoi(opt->value));
+        vpninfo->ssl_times.keepalive = MAX(10, (opt ? atoi(opt->value) : 0));
         opt = cpo_get(cpo, cpo_find_child(cpo, idx, "authentication"));
-        vpninfo->auth_expiration = time(NULL) + (MAX(3600, atoi(opt->value)));
+        vpninfo->auth_expiration = time(NULL) + (MAX(3600, (opt ? atoi(opt->value) : 0)));
 
         /* IP, NS, routing info */
         OM_idx = idx = cpo_find_child(cpo, 0, "OM");
         opt = cpo_get(cpo, cpo_find_child(cpo, idx, "ipaddr"));
-        new_ip_info.addr = add_option_dup(&new_cstp_opts, "ipaddr", opt->value, -1);
-        vpn_progress(vpninfo, PRG_DEBUG, _("Received internal Legacy IP address %s\n"), opt->value);
+        if (opt) {
+            new_ip_info.addr = add_option_dup(&new_cstp_opts, "ipaddr", opt->value, -1);
+            vpn_progress(vpninfo, PRG_DEBUG, _("Received internal Legacy IP address %s\n"), opt->value);
+        }
 
         idx = cpo_find_child(cpo, OM_idx, "dns_servers");
         if (idx >= 0) {
@@ -942,7 +971,7 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
         }
 
         opt = cpo_get(cpo, cpo_find_child(cpo, OM_idx, "dns_suffix"));
-        if (opt->value && strlen(opt->value))
+        if (opt && opt->value && strlen(opt->value))
             new_ip_info.domain = add_option_dup(&new_cstp_opts, "search", opt->value, -1);
 
         idx = cpo_find_child(cpo, OM_idx, "wins_servers");
@@ -957,19 +986,24 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
         }
         /* Note: optional.subnet not used. */
 
-        range_idx = cpo_find_child(cpo, 0, "range");
-        vpninfo->cstp_options = NULL;
-        if (range_idx >= 0)
-            ret = handle_ip_ranges(vpninfo, new_cstp_opts, &new_ip_info, cpo, range_idx);
-        if (ret > 0)
-            ret = install_vpn_opts(vpninfo, new_cstp_opts, &new_ip_info);
+        /* Sanity check */
+        if (!new_ip_info.addr) {
+            ret = -EINVAL;
+            vpn_progress(vpninfo, PRG_ERR, _("Internal address not received\n"));
+        } else {
+            range_idx = cpo_find_child(cpo, 0, "range");
+            if (range_idx >= 0)
+                ret = handle_ip_ranges(vpninfo, new_cstp_opts, &new_ip_info, cpo, range_idx);
+            if (ret > 0)
+                ret = install_vpn_opts(vpninfo, new_cstp_opts, &new_ip_info);
 
-        if (ret < 0) {
-            /* new_ip_info is bad. Perhaps IP address changed? */
-            free_optlist(new_cstp_opts);
-            free_split_routes(&new_ip_info);
-        } else
-	    vpninfo->ssl_times.last_rekey = time(NULL);
+            if (ret < 0) {
+                /* new_ip_info is bad. Perhaps IP address changed? */
+                free_optlist(new_cstp_opts);
+                free_split_routes(&new_ip_info);
+            }else
+                vpninfo->ssl_times.last_rekey = time(NULL);
+        }
     } else {
         const cp_option *code = cpo_get(cpo, cpo_find_child(cpo, 0, "code"));
         const cp_option *msg = cpo_get(cpo, cpo_find_child(cpo, 0, "message"));
@@ -978,7 +1012,8 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
             if (code && !strncmp(code->value, "201", 3))
                 ret = -EPERM;
             buf_append(error, "%s (code %s)", msg ? msg->value : "", code ? code->value : "");
-            vpn_progress(vpninfo, PRG_ERR, _("hello_reply not received. Server error: %s\n"), error->data);
+            if (!buf_error(error))
+                vpn_progress(vpninfo, PRG_ERR, _("hello_reply not received. Server error: %s\n"), error->data);
             buf_free(error);
         }
     }
@@ -1070,7 +1105,7 @@ static int snx_handle_command(struct openconnect_info *vpninfo)
         vpninfo->quit_reason = "Disconnect on server request";
         return -EPIPE;
     } else if (!strncmp(data, "(hello_reply", 12)) {
-        struct oc_ip_info*ip_info = &vpninfo->ip_info;
+        struct oc_ip_info *ip_info = &vpninfo->ip_info;
         ip_info->addr = ip_info->netmask = ip_info->domain = NULL;
         memset(ip_info->dns, 0, sizeof (ip_info->dns));
         memset(ip_info->nbns, 0, sizeof (ip_info->nbns));
@@ -1098,8 +1133,11 @@ int cp_obtain_cookie(struct openconnect_info *vpninfo)
     /* XX: If the user has provided a non-empty urlpath, assume they know what they're
      * doing and leave as-is.
      */
-    if (!vpninfo->urlpath)
-	    vpninfo->urlpath = strdup("clients/");
+    if (!vpninfo->urlpath) {
+        vpninfo->urlpath = strdup("clients/");
+        if (!vpninfo->urlpath)
+            return -ENOMEM;
+    }
     if ((ret = do_ccc_client_hello(vpninfo)) <= 0)
 	    goto out;
 
@@ -1222,22 +1260,21 @@ int cp_bye(struct openconnect_info *vpninfo, const char *reason)
     }
 
     if (colon) {
-	    orig_path = vpninfo->urlpath;
-	    vpninfo->urlpath = strdup(clients_str);
-	    buf_append(request_body, CCCclientRequestSignout, colon + 1);
-	    if ((result = buf_error(request_body)))
-		    goto out;
-	    result = https_request_wrapper(vpninfo, request_body, &data, 0);
-	    free(vpninfo->urlpath);
-	    vpninfo->urlpath = orig_path;
+        orig_path = vpninfo->urlpath;
+        vpninfo->urlpath = strdup(clients_str);
+        buf_append(request_body, CCCclientRequestSignout, colon + 1);
+        if (vpninfo->urlpath && !buf_error(request_body)) {
+            result = https_request_wrapper(vpninfo, request_body, &data, 0);
+            free(vpninfo->urlpath);
+            vpninfo->urlpath = orig_path;
 
-	    if (result < 0)
-		    vpn_progress(vpninfo, PRG_ERR, _("Logout failed.\n"));
-	    else
-		    vpn_progress(vpninfo, PRG_INFO, _("Logout successful.\n"));
+            if (result < 0)
+                vpn_progress(vpninfo, PRG_ERR, _("Logout failed.\n"));
+            else
+                vpn_progress(vpninfo, PRG_INFO, _("Logout successful.\n"));
+        }
     }
 
- out:
     free(data);
     buf_free(request_body);
     return 0;
