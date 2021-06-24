@@ -640,13 +640,13 @@ static int ccc_check_error(const cp_options *cpo, struct oc_text_buf *s)
 static int do_ccc_client_hello(struct openconnect_info *vpninfo)
 {
     static char pv[] = "protocol_version";
-    int result, idx, idx2 = -1, ichild = -1;
+    int idx, idx2 = -1, ichild = -1;
     char *resp_buf = NULL;
     cp_options *cpo = NULL;
     const cp_option *opt = NULL;
 
     /* Open connection here to use gateway_addr */
-    result = connect_https_socket(vpninfo);
+    int result = connect_https_socket(vpninfo);
     if (result < 0)
         return result;
     char *gw = vpninfo->ip_info.gateway_addr;
@@ -705,7 +705,7 @@ static int do_ccc_client_hello(struct openconnect_info *vpninfo)
     }
     buf_free(buf);
     free(resp_buf);
-    if (result <= 0)
+    if (result < 0)
         vpninfo->quit_reason = "ClientHello request error";
     return result;
 }
@@ -801,12 +801,11 @@ static int handle_login_reply(const char*data, struct openconnect_info *vpninfo)
                     ret = -ENOMEM;
                 else {
                     buf_append(buf, "%s:%s", slim_cookie, session_id->value);
-                    if (!buf_error(buf)) {
+                    ret = buf_error(buf);
+                    if (!ret) {
                         vpninfo->cookie = buf->data;
                         buf->data = NULL;
-                        ret = 1;
-                    } else
-                        ret = 0; /* FIXME: use OpenConnect-standard -errno pattern */
+                    }
                 }
                 free(slim_cookie);
             } else
@@ -894,13 +893,13 @@ static int gen_ranges(struct oc_ip_info *ip_info,
         ip_info->split_includes = inc;
         ip += mask + 1;
     }
-    return 1;
+    return 0;
 }
 
 static int handle_ip_ranges(struct openconnect_info *vpninfo, struct oc_vpn_option *new_cstp_opts,
         struct oc_ip_info *ip_info, const cp_options *cpo, int range_idx)
 {
-    int ret = 1, ichild = -1;
+    int ret = 0, ichild = -1;
     const cp_option*from_elem, *to_elem;
     uint32_t from_ip_int, to_ip_int, gw_ip_int = strtoipv4(vpninfo->ip_info.gateway_addr);
 
@@ -920,7 +919,7 @@ static int handle_ip_ranges(struct openconnect_info *vpninfo, struct oc_vpn_opti
         vpn_progress(vpninfo, PRG_DEBUG, _("Received Legacy IP address range %s:%s\n"),
                 from_elem->value, to_elem->value);
 
-        if ((ret = gen_ranges(ip_info, from_ip_int, to_ip_int)) < 0)
+        if ((ret = gen_ranges(ip_info, from_ip_int, to_ip_int)))
             break;
     }
     return ret;
@@ -935,7 +934,8 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
     struct oc_ip_info new_ip_info = {};
     cp_options *cpo = cpo_parse(data);
 
-    if (!cpo) return 0;
+    if (!cpo)
+        return ret;
     opt = cpo->elems;
     if (!strcmp(opt->key, "hello_reply")) {
 
@@ -994,7 +994,7 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
             range_idx = cpo_find_child(cpo, 0, "range");
             if (range_idx >= 0)
                 ret = handle_ip_ranges(vpninfo, new_cstp_opts, &new_ip_info, cpo, range_idx);
-            if (ret > 0)
+            if (!ret)
                 ret = install_vpn_opts(vpninfo, new_cstp_opts, &new_ip_info);
 
             if (ret < 0) {
@@ -1138,17 +1138,17 @@ int cp_obtain_cookie(struct openconnect_info *vpninfo)
         if (!vpninfo->urlpath)
             return -ENOMEM;
     }
-    if ((ret = do_ccc_client_hello(vpninfo)) <= 0)
+    if ((ret = do_ccc_client_hello(vpninfo)) < 0)
 	    goto out;
 
     do {
         ret = do_get_cookie(vpninfo);
-        if (ret <= 0)
+        if (ret < 0)
             break;
     } while (!vpninfo->cookie);
 
  out:
-    return ret <= 0;
+    return ret;
 }
 
 int cp_connect(struct openconnect_info *vpninfo)
@@ -1196,7 +1196,7 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 
             if (ptype == CMD) {
                 if (snx_handle_command(vpninfo))
-                    /* Server-side disconnect. Should exit. */
+                    /* Server-side disconnect or error. Should exit. */
                     return -EPIPE;
             } else if (ptype == DATA) {
                 queue_packet(&vpninfo->incoming_queue, vpninfo->cstp_pkt);
