@@ -1106,11 +1106,14 @@ static int snx_handle_command(struct openconnect_info *vpninfo)
         return -EPIPE;
     } else if (!strncmp(data, "(hello_reply", 12)) {
         struct oc_ip_info *ip_info = &vpninfo->ip_info;
-        ip_info->addr = ip_info->netmask = ip_info->domain = NULL;
-        memset(ip_info->dns, 0, sizeof (ip_info->dns));
-        memset(ip_info->nbns, 0, sizeof (ip_info->nbns));
+        int first_hr = !ip_info->addr;
+        if (!first_hr) {
+            ip_info->addr = ip_info->netmask = ip_info->domain = NULL;
+            memset(ip_info->dns, 0, sizeof (ip_info->dns));
+            memset(ip_info->nbns, 0, sizeof (ip_info->nbns));
+        }
         ret = handle_hello_reply(data, vpninfo);
-        if (ret >= 0) {
+        if (!ret && !first_hr) {
             os_shutdown_tun(vpninfo);
             ret = setup_tun_device(vpninfo);
         }
