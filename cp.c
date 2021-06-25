@@ -932,84 +932,73 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
 	if (!cpo)
 		return ret;
 	opt = cpo->elems;
-	if (!strcmp(opt->key, "hello_reply")) {
 
-		/* Log version strings */
-		opt = cpo_get(cpo, cpo_find_child(cpo, 0, "version"));
-		vpn_progress(vpninfo, PRG_DEBUG, _("CheckPoint server version is %s\n"), opt->value);
-		opt = cpo_get(cpo, cpo_find_child(cpo, 0, "protocol_version"));
-		vpn_progress(vpninfo, PRG_DEBUG, _("CheckPoint server protocol_version is %s\n"), opt->value);
+	/* Log version strings */
+	opt = cpo_get(cpo, cpo_find_child(cpo, 0, "version"));
+	vpn_progress(vpninfo, PRG_DEBUG, _("CheckPoint server version is %s\n"), opt->value);
+	opt = cpo_get(cpo, cpo_find_child(cpo, 0, "protocol_version"));
+	vpn_progress(vpninfo, PRG_DEBUG, _("CheckPoint server protocol_version is %s\n"), opt->value);
 
-		/* Timeouts setup */
-		idx = cpo_find_child(cpo, 0, "timeouts");
-		opt = cpo_get(cpo, cpo_find_child(cpo, idx, "keepalive"));
-		vpninfo->ssl_times.keepalive = MAX(10, (opt ? atoi(opt->value) : 0));
-		opt = cpo_get(cpo, cpo_find_child(cpo, idx, "authentication"));
-		vpninfo->auth_expiration = time(NULL) + (MAX(3600, (opt ? atoi(opt->value) : 0)));
+	/* Timeouts setup */
+	idx = cpo_find_child(cpo, 0, "timeouts");
+	opt = cpo_get(cpo, cpo_find_child(cpo, idx, "keepalive"));
+	vpninfo->ssl_times.keepalive = MAX(10, (opt ? atoi(opt->value) : 0));
+	opt = cpo_get(cpo, cpo_find_child(cpo, idx, "authentication"));
+	vpninfo->auth_expiration = time(NULL) + (MAX(3600, (opt ? atoi(opt->value) : 0)));
 
-		/* IP, NS, routing info */
-		OM_idx = idx = cpo_find_child(cpo, 0, "OM");
-		opt = cpo_get(cpo, cpo_find_child(cpo, idx, "ipaddr"));
-		if (opt) {
-			new_ip_info.addr = add_option_dup(&new_cstp_opts, "ipaddr", opt->value, -1);
-			vpn_progress(vpninfo, PRG_DEBUG, _("Received internal Legacy IP address %s\n"), opt->value);
-		}
-
-		idx = cpo_find_child(cpo, OM_idx, "dns_servers");
-		if (idx >= 0) {
-			i = 0;
-			while ((i < 3) && cpo_elem_iter(cpo, idx, &ichild)) {
-				opt = cpo_get(cpo, ichild);
-				vpn_progress(vpninfo, PRG_DEBUG, _("Received DNS server %s\n"), opt->value);
-				new_ip_info.dns[i++] = add_option_dup(&new_cstp_opts, "DNS", opt->value, -1);
-			}
-		}
-
-		opt = cpo_get(cpo, cpo_find_child(cpo, OM_idx, "dns_suffix"));
-		if (opt && opt->value && strlen(opt->value))
-			new_ip_info.domain = add_option_dup(&new_cstp_opts, "search", opt->value, -1);
-
-		idx = cpo_find_child(cpo, OM_idx, "wins_servers");
-		if (idx >= 0) {
-			i = 0;
-			ichild = -1;
-			while ((i < 3) && cpo_elem_iter(cpo, idx, &ichild)) {
-				opt = cpo_get(cpo, ichild);
-				vpn_progress(vpninfo, PRG_DEBUG, _("Received WINS server %s\n"), opt->value);
-				new_ip_info.nbns[i++] = add_option_dup(&new_cstp_opts, "WINS", opt->value, -1);
-			}
-		}
-		/* Note: optional.subnet not used. */
-
-		/* Sanity check */
-		if (!new_ip_info.addr) {
-			ret = -EINVAL;
-			vpn_progress(vpninfo, PRG_ERR, _("Internal address not received\n"));
-		} else {
-			range_idx = cpo_find_child(cpo, 0, "range");
-			if (range_idx >= 0)
-				ret = handle_ip_ranges(vpninfo, new_cstp_opts, &new_ip_info, cpo, range_idx);
-			if (!ret)
-				ret = install_vpn_opts(vpninfo, new_cstp_opts, &new_ip_info);
-
-			if (ret < 0) {
-				/* new_ip_info is bad. Perhaps IP address changed? */
-				free_optlist(new_cstp_opts);
-				free_split_routes(&new_ip_info);
-			}else
-				vpninfo->ssl_times.last_rekey = time(NULL);
-		}
-	} else if (!strcmp(opt->key, "disconnect")) {
-		const cp_option *code = cpo_get(cpo, cpo_find_child(cpo, 0, "code"));
-		const cp_option *msg = cpo_get(cpo, cpo_find_child(cpo, 0, "message"));
-		struct oc_text_buf *error = buf_alloc();
-		if (code && !strncmp(code->value, "201", 3))
-			ret = -EPERM;
-		buf_append(error, "%s (code %s)", msg ? msg->value : "", code ? code->value : "");
-		if (!buf_error(error))
-			vpn_progress(vpninfo, PRG_ERR, _("hello_reply not received. Server error: %s\n"), error->data);
-		buf_free(error);
+	/* IP, NS, routing info */
+	OM_idx = idx = cpo_find_child(cpo, 0, "OM");
+	opt = cpo_get(cpo, cpo_find_child(cpo, idx, "ipaddr"));
+	if (opt) {
+		new_ip_info.addr = add_option_dup(&new_cstp_opts, "ipaddr", opt->value, -1);
+		vpn_progress(vpninfo, PRG_DEBUG, _("Received internal Legacy IP address %s\n"), opt->value);
 	}
+
+	idx = cpo_find_child(cpo, OM_idx, "dns_servers");
+	if (idx >= 0) {
+		i = 0;
+		while ((i < 3) && cpo_elem_iter(cpo, idx, &ichild)) {
+			opt = cpo_get(cpo, ichild);
+			vpn_progress(vpninfo, PRG_DEBUG, _("Received DNS server %s\n"), opt->value);
+			new_ip_info.dns[i++] = add_option_dup(&new_cstp_opts, "DNS", opt->value, -1);
+		}
+	}
+
+	opt = cpo_get(cpo, cpo_find_child(cpo, OM_idx, "dns_suffix"));
+	if (opt && opt->value && strlen(opt->value))
+		new_ip_info.domain = add_option_dup(&new_cstp_opts, "search", opt->value, -1);
+
+	idx = cpo_find_child(cpo, OM_idx, "wins_servers");
+	if (idx >= 0) {
+		i = 0;
+		ichild = -1;
+		while ((i < 3) && cpo_elem_iter(cpo, idx, &ichild)) {
+			opt = cpo_get(cpo, ichild);
+			vpn_progress(vpninfo, PRG_DEBUG, _("Received WINS server %s\n"), opt->value);
+			new_ip_info.nbns[i++] = add_option_dup(&new_cstp_opts, "WINS", opt->value, -1);
+		}
+	}
+	/* Note: optional.subnet not used. */
+
+	/* Sanity check */
+	if (!new_ip_info.addr) {
+		ret = -EINVAL;
+		vpn_progress(vpninfo, PRG_ERR, _("Internal address not received\n"));
+	} else {
+		range_idx = cpo_find_child(cpo, 0, "range");
+		if (range_idx >= 0)
+			ret = handle_ip_ranges(vpninfo, new_cstp_opts, &new_ip_info, cpo, range_idx);
+		if (!ret)
+			ret = install_vpn_opts(vpninfo, new_cstp_opts, &new_ip_info);
+
+		if (ret < 0) {
+			/* new_ip_info is bad. Perhaps IP address changed? */
+			free_optlist(new_cstp_opts);
+			free_split_routes(&new_ip_info);
+		} else
+			vpninfo->ssl_times.last_rekey = time(NULL);
+	}
+
 	cpo_free(cpo);
 	return ret;
 }
@@ -1062,9 +1051,14 @@ static int snx_handle_command(struct openconnect_info *vpninfo)
 
 	if (!strncmp(data, "(disconnect", 11)) {
 		cp_options *cpo = cpo_parse(data);
+		const cp_option *code = cpo_get(cpo, cpo_find_child(cpo, 0, "code"));
 		const cp_option *msg = cpo_get(cpo, cpo_find_child(cpo, 0, "message"));
-		if (msg)
-			vpn_progress(vpninfo, PRG_INFO, _("Server disconnect message: %s\n"), msg->value);
+		if (code && !strncmp(code->value, "201", 3))
+			ret = -EPERM;
+		else
+			ret = -EPIPE;
+		vpn_progress(vpninfo, PRG_ERR, _("Server disconnect: %s (code %s)\n"),
+			     msg ? msg->value : NULL, code ? code->value : NULL);
 		cpo_free(cpo);
 		vpninfo->quit_reason = "Disconnect on server request";
 		return -EPIPE;
@@ -1144,7 +1138,7 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 
 			/* FIXME: make this control flow / exception-handling saner */
 			if (vpninfo->ssl_times.last_rekey == 0) {
-				if (ptype != CMD || strncmp((const char *)vpninfo->cstp_pkt->data, "(hello_reply", 12)) {
+				if (ptype != CMD) {
 					vpn_progress(vpninfo, PRG_ERR, _("Unexpected packet received prior to hello_reply, ignoring\n"));
 					dump_buf_hex(vpninfo, PRG_ERR, '<', (void *) &vpninfo->cstp_pkt->cpsnx.hdr, 8 + vpninfo->cstp_pkt->len);
 					free(vpninfo->cstp_pkt);
@@ -1154,9 +1148,9 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 			}
 
 			if (ptype == CMD) {
-				if (snx_handle_command(vpninfo))
-					/* Server-side disconnect or error. Should exit. */
-					return -EPIPE;
+				result = snx_handle_command(vpninfo);
+				if (result)
+					return result;
 			} else if (ptype == DATA) {
 				queue_packet(&vpninfo->incoming_queue, vpninfo->cstp_pkt);
 				vpninfo->cstp_pkt = NULL;
