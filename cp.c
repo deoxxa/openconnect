@@ -286,9 +286,8 @@ static uint32_t strtoipv4(const char *ip)
 {
 	uint32_t ret = 0;
 	struct in_addr buf;
-	if (inet_pton(AF_INET, ip, &buf) == 1) {
+	if (inet_pton(AF_INET, ip, &buf) == 1)
 		ret = ntohl(buf.s_addr);
-	}
 	return ret;
 }
 
@@ -422,9 +421,8 @@ static int cpo_parse_elem(cp_options *cfg, char **input_ptr, int pidx, int *next
 		} else {
 			cbrkt = strchr(colon, ')');
 			nl = strchr(colon, '\n');
-			if (nl < cbrkt) {
+			if (nl < cbrkt)
 				cbrkt = NULL;
-			}
 		}
 	} else {
 		colon = NULL;
@@ -472,11 +470,8 @@ static int cpo_parse_elem(cp_options *cfg, char **input_ptr, int pidx, int *next
 				return good;
 			}
 		}
-	} else {
-		if (cbrkt)
-			/* Container end */
-			return 1;
-	}
+	} else if (cbrkt)
+		return 1; /* Container end */
 	return 0;
 }
 
@@ -1004,18 +999,16 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
 			}else
 				vpninfo->ssl_times.last_rekey = time(NULL);
 		}
-	} else {
+	} else if (!strcmp(opt->key, "disconnect")) {
 		const cp_option *code = cpo_get(cpo, cpo_find_child(cpo, 0, "code"));
 		const cp_option *msg = cpo_get(cpo, cpo_find_child(cpo, 0, "message"));
-		if (!strcmp(opt->key, "disconnect")) {
-			struct oc_text_buf *error = buf_alloc();
-			if (code && !strncmp(code->value, "201", 3))
-				ret = -EPERM;
-			buf_append(error, "%s (code %s)", msg ? msg->value : "", code ? code->value : "");
-			if (!buf_error(error))
-				vpn_progress(vpninfo, PRG_ERR, _("hello_reply not received. Server error: %s\n"), error->data);
-			buf_free(error);
-		}
+		struct oc_text_buf *error = buf_alloc();
+		if (code && !strncmp(code->value, "201", 3))
+			ret = -EPERM;
+		buf_append(error, "%s (code %s)", msg ? msg->value : "", code ? code->value : "");
+		if (!buf_error(error))
+			vpn_progress(vpninfo, PRG_ERR, _("hello_reply not received. Server error: %s\n"), error->data);
+		buf_free(error);
 	}
 	cpo_free(cpo);
 	return ret;
@@ -1093,7 +1086,6 @@ static int snx_handle_command(struct openconnect_info *vpninfo)
 
 int cp_obtain_cookie(struct openconnect_info *vpninfo)
 {
-
 	int ret;
 
 	/* XX: If the user has provided a non-empty urlpath, assume they know what they're
@@ -1124,7 +1116,6 @@ int cp_connect(struct openconnect_info *vpninfo)
 
 	vpninfo->ip_info.mtu = 1500; /* Fixed 4 now */
 	return snx_start_tunnel(vpninfo);
-
 }
 
 int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
@@ -1141,9 +1132,8 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 	if (readable) {
 		int ptype = -1;
 		result = snx_receive(vpninfo, &ptype);
-		if (result == -ENOMEM) {
+		if (result == -ENOMEM)
 			return result;
-		}
 
 		if (result != -EAGAIN) {
 			if (result < 0)
@@ -1187,7 +1177,6 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 		unmonitor_write_fd(vpninfo, ssl);
 
 	if (vpninfo->current_ssl_pkt) {
-
 		if ((result = snx_send(vpninfo)) < 0)
 			/* Try to reconnect on error */
 			return do_reconnect(vpninfo);
@@ -1199,17 +1188,13 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 		switch (keepalive_action(&vpninfo->ssl_times, timeout)) {
 		case KA_DPD:
 		case KA_KEEPALIVE:
-			{
-				if ((result = snx_send_command(vpninfo, keepalive)) < 0)
-					/* Try to reconnect on error */
-					return do_reconnect(vpninfo);
-				ret += result;
-				break;
-			}
-		case KA_DPD_DEAD:
-			{
+			if ((result = snx_send_command(vpninfo, keepalive)) < 0)
+				/* Try to reconnect on error */
 				return do_reconnect(vpninfo);
-			}
+			ret += result;
+			break;
+		case KA_DPD_DEAD:
+			return do_reconnect(vpninfo);
 		}
 	}
 	return ret;
