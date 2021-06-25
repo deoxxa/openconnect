@@ -1076,14 +1076,10 @@ static int snx_handle_command(struct openconnect_info *vpninfo)
         vpninfo->quit_reason = "Disconnect on server request";
         return -EPIPE;
     } else if (!strncmp(data, "(hello_reply", 12)) {
-        struct oc_ip_info *ip_info = &vpninfo->ip_info;
-        int first_hr = !ip_info->addr;
-        if (!first_hr) {
-            ip_info->addr = ip_info->netmask = ip_info->domain = NULL;
-            memset(ip_info->dns, 0, sizeof (ip_info->dns));
-            memset(ip_info->nbns, 0, sizeof (ip_info->nbns));
-        }
-        ret = handle_hello_reply(data, vpninfo);
+        if (!vpninfo->ssl_times.last_rekey)
+            ret = handle_hello_reply(data, vpninfo);
+        else
+            vpn_progress(vpninfo, PRG_ERR, _("WARNING: Repeated 'hello_reply' received, ignoring."));
     } else if (!strncmp(data, "(hello_again", 12))
         vpn_progress(vpninfo, PRG_DEBUG, _("'hello_again' received, ignoring.\n"));
     else if (!strncmp(data, "(keepalive", 10))
