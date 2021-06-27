@@ -2,6 +2,7 @@
  * OpenConnect (SSL + DTLS) VPN client
  *
  * Copyright © 2020-2021 Nick Krylov.
+ * Copyright © 2021 Daniel Lenski.
  *
  * Author: Nick Krylov <krylovna@gmail.com>
  *
