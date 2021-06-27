@@ -995,8 +995,10 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
 			/* new_ip_info is bad. Perhaps IP address changed? */
 			free_optlist(new_cstp_opts);
 			free_split_routes(&new_ip_info);
-		} else
+		} else {
 			vpninfo->ssl_times.last_rekey = time(NULL);
+			vpninfo->delay_tunnel_reason = NULL;
+        }
 	}
 
 	cpo_free(cpo);
