@@ -43,6 +43,16 @@ enum PACKET_TYPE {
 static char clients_str[] = "/clients/";
 static char awaiting_hello_reply[] = "Awaiting hello_reply";
 
+/* Strange initialisers here to work around GCC PR#10676 (which was
+ * fixed in GCC 4.6 but it takes a while for some systems to catch
+ * up. */
+static const struct pkt keepalive_pkt = {
+	.next = NULL,
+	{ .cpsnx.hdr = { 0, 0, 0, 25, 0, 0, 0, CMD } },
+	.len=25,
+	.data = "(keepalive\n    :id (0)\n)", /* XX: 25 bytes, including final '\0' */
+};
+
 /* CCC protocol commands */
 
 static const char CCCclientRequestClientHello[] = "(CCCclientRequest\n\
@@ -105,10 +115,6 @@ static const char client_hello[] = "(client_hello\n\
         :cookie (%s)\n\
 )";
 
-static const char keepalive[] = "(keepalive\n\
-        :id (0)\n\
-)";
-
 static const char disconnect[] = "(disconnect\n\
         :code (28)\n\
         :message (\"User has disconnected.\")\n\
@@ -123,28 +129,6 @@ static struct pkt *build_packet(int type, const void *data, int len)
 	store_be32(p->cpsnx.hdr + 4, type);
 	memcpy(p->data, data, len);
 	return p;
-}
-
-static int snx_send(struct openconnect_info *vpninfo)
-{
-	struct pkt *p = vpninfo->current_ssl_pkt;
-	int tot_len = p->len + sizeof (p->cpsnx.hdr);
-	int ptype = load_be32(p->cpsnx.hdr + 4);
-	int ret;
-
-	store_be32(p->cpsnx.hdr, p->len);
-	if (ptype == DATA) {
-		vpn_progress(vpninfo, PRG_TRACE, _("Packet outgoing:\n"));
-		dump_buf_hex(vpninfo, PRG_TRACE, '>', (void *) p->cpsnx.hdr, tot_len);
-	}
-
-	ret = ssl_nonblock_write(vpninfo, 0, p->cpsnx.hdr, tot_len);
-	/* Resend only if ret == 0! */
-	if (ret != 0) {
-		FREE(vpninfo->current_ssl_pkt);
-		vpninfo->ssl_times.last_tx = time(NULL);
-	}
-	return ret;
 }
 
 /* Special handling for commands: hide authentication-related fields */
@@ -182,19 +166,10 @@ static char *hide_auth_data(const char *data)
 static int snx_send_command(struct openconnect_info *vpninfo, const char*cmd)
 {
 	int len = strlen(cmd) + 1;
-	vpninfo->current_ssl_pkt = build_packet(CMD, cmd, len);
-	if (!vpninfo->current_ssl_pkt)
+	struct pkt *pkt = build_packet(CMD, cmd, len);
+	if (!pkt)
 		return -ENOMEM;
-#ifdef INSECURE_DEBUGGING
-	vpn_progress(vpninfo, PRG_DEBUG, _("Command outgoing\n%s\n"), cmd);
-#else
-	if (vpninfo->verbose >= PRG_DEBUG) {
-		char *cmd_print = hide_auth_data(cmd);
-		vpn_progress(vpninfo, PRG_DEBUG, _("Command outgoing:\n%s\n"), cmd_print);
-		free(cmd_print);
-	}
-#endif
-	return snx_send(vpninfo);
+	return queue_packet(&vpninfo->tcp_control_queue, pkt);
 }
 
 static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type) {
@@ -1116,6 +1091,7 @@ int cp_connect(struct openconnect_info *vpninfo)
 
 int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 {
+	static const int hdr_len = 8;
 	int ret = 0, result;
 
 	if (vpninfo->ssl_fd == -1)
@@ -1164,34 +1140,77 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 	/* Service one outgoing packet. */
 
 	if (!vpninfo->current_ssl_pkt) {
-		struct pkt *qpkt = dequeue_packet(&vpninfo->outgoing_queue);
-		if (qpkt) {
-			vpninfo->current_ssl_pkt = qpkt;
-			store_be32(qpkt->cpsnx.hdr + 4, DATA);
+		struct pkt *this;
+		if ((this = dequeue_packet(&vpninfo->tcp_control_queue)) != NULL) {
+			store_be32(this->cpsnx.hdr + 4, CMD);
+#ifdef INSECURE_DEBUGGING
+			vpn_progress(vpninfo, PRG_DEBUG, _("Command packet outgoing\n%s\n"), this->data);
+#else
+			if (vpninfo->verbose >= PRG_DEBUG) {
+				char *cmd_print = hide_auth_data(this->data);
+				vpn_progress(vpninfo, PRG_DEBUG, _("Command outgoing:\n%s\n"), cmd_print);
+				free(cmd_print);
+			}
+#endif
+		} else if ((this = dequeue_packet(&vpninfo->outgoing_queue)) != NULL) {
+			int tot_len = this->len + hdr_len;
+			store_be32(this->cpsnx.hdr + 4, DATA);
+			vpn_progress(vpninfo, PRG_TRACE, _("Data packet outgoing:\n"));
+			dump_buf_hex(vpninfo, PRG_TRACE, '>', (void *) this->cpsnx.hdr, tot_len);
+		}
+		if (this) {
+			store_be32(this->cpsnx.hdr, this->len);
+			vpninfo->current_ssl_pkt = this;
 		}
 	} else
 		unmonitor_write_fd(vpninfo, ssl);
 
 	if (vpninfo->current_ssl_pkt) {
-		if ((result = snx_send(vpninfo)) < 0)
-			/* Try to reconnect on error */
-			return do_reconnect(vpninfo);
+		vpninfo->ssl_times.last_tx = time(NULL);
+		unmonitor_write_fd(vpninfo, ssl);
+
+		result = ssl_nonblock_write(vpninfo, 0,
+					 vpninfo->current_ssl_pkt->cpsnx.hdr,
+					 vpninfo->current_ssl_pkt->len + hdr_len);
 		ret += result;
+
+		/* FIXME: need reconnect and ka_stalled_action handler here */
+		if (result < 0) {
+			return do_reconnect(vpninfo); /* FIXME: goto do_reconnect */
+		} else if (!result) {
+			switch (ka_stalled_action(&vpninfo->ssl_times, timeout)) {
+			case KA_REKEY:
+				break; /* FIXME: goto do_rekey; */
+			case KA_DPD_DEAD:
+				break; /* FIXME: goto peer_dead; */
+			case KA_NONE:
+				return ret;
+			}
+		}
+
+		if (ret != vpninfo->current_ssl_pkt->len + hdr_len) {
+			vpn_progress(vpninfo, PRG_ERR,
+				     _("SSL wrote too few bytes! Asked for %d, sent %d\n"),
+				     vpninfo->current_ssl_pkt->len + hdr_len, ret);
+			vpninfo->quit_reason = "Internal error";
+			return 1;
+		}
+
+		/* Don't free the 'special' packets */
+		if (vpninfo->current_ssl_pkt != &keepalive_pkt)
+			free(vpninfo->current_ssl_pkt);
+
+		vpninfo->current_ssl_pkt = NULL;
 	}
 
-	/* Send KA if previous packet was successfully sent. */
-	if (!vpninfo->current_ssl_pkt) {
-		switch (keepalive_action(&vpninfo->ssl_times, timeout)) {
-		case KA_DPD:
-		case KA_KEEPALIVE:
-			if ((result = snx_send_command(vpninfo, keepalive)) < 0)
-				/* Try to reconnect on error */
-				return do_reconnect(vpninfo);
-			ret += result;
-			break;
-		case KA_DPD_DEAD:
-			return do_reconnect(vpninfo);
-		}
+	switch (keepalive_action(&vpninfo->ssl_times, timeout)) {
+	case KA_DPD:
+	case KA_KEEPALIVE:
+		vpninfo->current_ssl_pkt = (struct pkt *)&keepalive_pkt;
+		ret = 1; /* set work_done; FIXME: goto will make this much saner */
+		break;
+	case KA_DPD_DEAD:
+		return do_reconnect(vpninfo);
 	}
 	return ret;
 }
