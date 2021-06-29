@@ -40,6 +40,8 @@ enum PACKET_TYPE {
 	DATA
 };
 
+static const int hdr_len = sizeof(((struct pkt*)NULL)->cpsnx.hdr);
+
 static char clients_str[] = "/clients/";
 static char awaiting_hello_reply[] = "Awaiting hello_reply";
 
@@ -120,9 +122,9 @@ static const char disconnect[] = "(disconnect\n\
         :message (\"User has disconnected.\")\n\
 )";
 
-static struct pkt *build_packet(int type, const void *data, int len)
+static struct pkt *build_packet(struct openconnect_info *vpninfo, int type, const void *data, int len)
 {
-	struct pkt *p = calloc(1, sizeof (struct pkt) +len);
+	struct pkt *p = alloc_pkt(vpninfo, len);
 	if (!p)
 		return NULL;
 	p->len = len;
@@ -166,33 +168,35 @@ static char *hide_auth_data(const char *data)
 static int snx_send_command(struct openconnect_info *vpninfo, const char*cmd)
 {
 	int len = strlen(cmd) + 1;
-	struct pkt *pkt = build_packet(CMD, cmd, len);
+	struct pkt *pkt = build_packet(vpninfo, CMD, cmd, len);
 	if (!pkt)
 		return -ENOMEM;
 	return queue_packet(&vpninfo->tcp_control_queue, pkt);
 }
 
 static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type) {
-	static const int hdr_len = 8;
 	int ret;
 	uint8_t *buf;
 	struct pkt *pkt = vpninfo->cstp_pkt;
+	int receive_mtu = MAX(16384, vpninfo->ip_info.mtu);
 
 	if (!pkt) {
-		pkt = vpninfo->cstp_pkt = calloc(1, sizeof (struct pkt));
+		pkt = vpninfo->cstp_pkt = alloc_pkt(vpninfo, receive_mtu);
 		if (!pkt)
 			return -ENOMEM;
 	}
 
+	/* FIXME: check that packet size does not exceed receive_mtu */
+
 	/* Read header */
 	if (pkt->len == 0) {
 		int len_rec = hdr_len - vpninfo->partial_rec_size;
-		buf = pkt->cstp.hdr + vpninfo->partial_rec_size;
+		buf = pkt->cpsnx.hdr + vpninfo->partial_rec_size;
 		ret = ssl_nonblock_read(vpninfo, 0, buf, len_rec);
 
 		if (ret < 0) {
 			/* Exit immediately on error. */
-			FREE(vpninfo->cstp_pkt);
+			free_pkt(vpninfo, vpninfo->cstp_pkt);
 			return ret;
 		}
 
@@ -203,11 +207,6 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type) {
 		}
 
 		pkt->len = load_be32(pkt->cpsnx.hdr);
-		realloc_inplace(vpninfo->cstp_pkt, sizeof (struct pkt) + pkt->len);
-		if (!vpninfo->cstp_pkt) {
-			vpn_progress(vpninfo, PRG_ERR, _("Allocation failed.\n"));
-			return -ENOMEM;
-		}
 		pkt = vpninfo->cstp_pkt;
 		vpninfo->partial_rec_size = 0;
 	}
@@ -220,7 +219,7 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type) {
 	ret = ssl_nonblock_read(vpninfo, 0, buf, payload_len);
 
 	if (ret < 0) {
-		FREE(vpninfo->cstp_pkt);
+		free_pkt(vpninfo, vpninfo->cstp_pkt);
 		/* Exit immediately on error. */
 		return ret;
 	}
@@ -1091,7 +1090,6 @@ int cp_connect(struct openconnect_info *vpninfo)
 
 int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 {
-	static const int hdr_len = 8;
 	int ret = 0, result;
 
 	if (vpninfo->ssl_fd == -1)
