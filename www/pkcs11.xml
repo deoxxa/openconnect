@@ -28,7 +28,7 @@ hopefully assist you in working it out.</p>
 <h2>Identifying the token</h2>
 <p>In order to use a PKCS#11 token with OpenConnect, first it must be installed
 appropriately in the system's
-<a href="http://p11-glue.freedesktop.org/doc/p11-kit/config.html">p11-kit configuration</a>.
+<a href="https://p11-glue.github.io/p11-glue/p11-kit/manual/config.html">p11-kit configuration</a>.
 You shouldn't need to worry about this; it should automatically be the case for
 properly packaged software on any modern operating system.</p>
 
@@ -40,7 +40,7 @@ the OpenSC module with p11-kit by creating a file such as
 
 <p>In order to query the available PKCS#11 modules, and the certificates
 stored therein, the best tool to use is the
-<a href="http://www.gnutls.org/manual/html_node/p11tool-Invocation.html">p11tool</a>
+<a href="https://www.gnutls.org/manual/html_node/p11tool-Invocation.html">p11tool</a>
 distributed with GnuTLS. In Fedora it's in the <tt>gnutls-utils</tt> package.</p>
 
 <p>First identify the PKCS#11 modules which are available by using the <tt>--list-tokens</tt> option:</p>
@@ -48,7 +48,7 @@ distributed with GnuTLS. In Fedora it's in the <tt>gnutls-utils</tt> package.</p
 This should produce output including something like the following:
 <table border="1"><tr><td><pre>
 Token 7:
-	URL: pkcs11:model=PKCS%2315%20emulated;manufacturer=piv_II;serial=108421384210c3f5;token=PIV_II%20%28PIV%20Card%20Holder%20pin%29 
+	URL: pkcs11:model=PKCS%2315%20emulated;manufacturer=piv_II;serial=108421384210c3f5;token=PIV_II%20%28PIV%20Card%20Holder%20pin%29
 	Label: PIV_II (PIV Card Holder pin)
 	Type: Hardware token
 	Manufacturer: piv_II
@@ -162,33 +162,33 @@ provide an explicit PKCS#11 URI for the key with the <tt>-k</tt>
 option. You can look for them by using the <tt>--list-privkeys</tt> option to <tt>p11tool</tt>. You will almost certainly want to use the <tt>--login</tt> option too:</p>
 <ul><li><tt>p11tool --list-privkeys --login pkcs11:manufacturer=piv_II</tt></li></ul>
 <table border="1"><tr><td><pre>Token 'PIV_II (PIV Card Holder pin)' with URL 'pkcs11:model=PKCS%2315%20emulated;manufacturer=piv_II;serial=108421384210c3f5;token=PIV_II%20%28PIV%20Card%20Holder%20pin%29' requires user PIN
-Enter PIN: 
+Enter PIN:
 Object 0:
 	URL: pkcs11:model=PKCS%2315%20emulated;manufacturer=piv_II;serial=108421384210c3f5;token=PIV_II%20%28PIV%20Card%20Holder%20pin%29;id=%01;object=PIV%20AUTH%20key;object-type=private
 	Type: Private key
 	Label: PIV AUTH key
-	Flags: CKA_WRAP/UNWRAP; CKA_PRIVATE; CKA_SENSITIVE; 
+	Flags: CKA_WRAP/UNWRAP; CKA_PRIVATE; CKA_SENSITIVE;
 	ID: 01
 
 Object 1:
 	URL: pkcs11:model=PKCS%2315%20emulated;manufacturer=piv_II;serial=108421384210c3f5;token=PIV_II%20%28PIV%20Card%20Holder%20pin%29;id=%02;object=SIGN%20key;object-type=private
 	Type: Private key
 	Label: SIGN key
-	Flags: CKA_PRIVATE; CKA_SENSITIVE; 
+	Flags: CKA_PRIVATE; CKA_SENSITIVE;
 	ID: 02
 
 Object 2:
 	URL: pkcs11:model=PKCS%2315%20emulated;manufacturer=piv_II;serial=108421384210c3f5;token=PIV_II%20%28PIV%20Card%20Holder%20pin%29;id=%03;object=KEY%20MAN%20key;object-type=private
 	Type: Private key
 	Label: KEY MAN key
-	Flags: CKA_WRAP/UNWRAP; CKA_PRIVATE; CKA_SENSITIVE; 
+	Flags: CKA_WRAP/UNWRAP; CKA_PRIVATE; CKA_SENSITIVE;
 	ID: 03
 
 Object 3:
 	URL: pkcs11:model=PKCS%2315%20emulated;manufacturer=piv_II;serial=108421384210c3f5;token=PIV_II%20%28PIV%20Card%20Holder%20pin%29;id=%04;object=CARD%20AUTH%20key;object-type=private
 	Type: Private key
 	Label: CARD AUTH key
-	Flags: CKA_SENSITIVE; 
+	Flags: CKA_SENSITIVE;
 	ID: 04
 </pre></td></tr></table>
 <p>

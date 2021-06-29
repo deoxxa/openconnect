@@ -65,7 +65,7 @@
 #endif
 #endif
 
-static inline int connect_pending()
+static inline int connect_pending(void)
 {
 #ifdef _WIN32
 	return WSAGetLastError() == WSAEWOULDBLOCK;
@@ -127,7 +127,7 @@ static int cancellable_connect(struct openconnect_info *vpninfo, int sockfd,
 		 !vpninfo->got_pause_cmd);
 
 	/* Check whether connect() succeeded or failed by using
-	   getpeername(). See http://cr.yp.to/docs/connect.html */
+	   getpeername(). See https://cr.yp.to/docs/connect.html */
 	if (!getpeername(sockfd, (void *)&peer, &peerlen))
 		return 0;
 
@@ -860,14 +860,20 @@ void poll_cmd_fd(struct openconnect_info *vpninfo, int timeout)
 		tv.tv_sec = now >= expiration ? 0 : expiration - now;
 		tv.tv_usec = 0;
 
+		/* If the cmd_fd is internal and we've been told to poll it,
+		 * don't *keep* doing so afterwards. */
+		vpninfo->need_poll_cmd_fd = !vpninfo->cmd_fd_internal;
+
 		FD_ZERO(&rd_set);
 		cmd_fd_set(vpninfo, &rd_set, &maxfd);
 		if (select(maxfd + 1, &rd_set, NULL, NULL, &tv) < 0 &&
 		    errno != EINTR) {
 			vpn_perror(vpninfo, _("Failed select() for command socket"));
 		}
-
-		check_cmd_fd(vpninfo, &rd_set);
+		if (FD_ISSET(vpninfo->cmd_fd, &rd_set)) {
+			vpninfo->need_poll_cmd_fd = 1; /* Until it's *empty */
+			check_cmd_fd(vpninfo, &rd_set);
+		}
 	}
 }
 
@@ -1048,10 +1054,17 @@ int udp_connect(struct openconnect_info *vpninfo)
 	if (vpninfo->protect_socket)
 		vpninfo->protect_socket(vpninfo->cbdata, fd);
 
-	sndbuf = vpninfo->ip_info.mtu * 2;
+	sndbuf = vpninfo->ip_info.mtu;
+	if (!sndbuf)
+		sndbuf = 1500;
+	sndbuf *= vpninfo->max_qlen;
 	if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (void *)&sndbuf, sizeof(sndbuf)) < 0) {
 		vpn_perror(vpninfo, "Set UDP socket send buffer");
 	}
+
+	socklen_t l = sizeof(sndbuf);
+	if (!getsockopt(fd, SOL_SOCKET, SO_SNDBUF, (void *)&sndbuf, &l))
+		vpn_progress(vpninfo, PRG_DEBUG, "UDP SO_SNDBUF: %d\n", sndbuf);
 
 	if (vpninfo->dtls_local_port) {
 		union {
@@ -1118,9 +1131,9 @@ int ssl_reconnect(struct openconnect_info *vpninfo)
 	timeout = vpninfo->reconnect_timeout;
 	interval = vpninfo->reconnect_interval;
 
-	free(vpninfo->dtls_pkt);
+	free_pkt(vpninfo, vpninfo->dtls_pkt);
 	vpninfo->dtls_pkt = NULL;
-	free(vpninfo->tun_pkt);
+	free_pkt(vpninfo, vpninfo->tun_pkt);
 	vpninfo->tun_pkt = NULL;
 
 	while (1) {

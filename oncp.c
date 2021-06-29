@@ -371,12 +371,16 @@ static const struct pkt esp_enable_pkt = {
 
 static int queue_esp_control(struct openconnect_info *vpninfo, int enable)
 {
-	struct pkt *new = malloc(sizeof(*new) + 13);
+	struct pkt *new = alloc_pkt(vpninfo, esp_enable_pkt.len);
 	if (!new)
 		return -ENOMEM;
 
-	memcpy(new, &esp_enable_pkt, sizeof(*new) + 13);
+	new->oncp = esp_enable_pkt.oncp;
+	new->len = esp_enable_pkt.len;
+
+	memcpy(new->data, esp_enable_pkt.data, esp_enable_pkt.len);
 	new->data[12] = enable;
+
 	queue_packet(&vpninfo->tcp_control_queue, new);
 	return 0;
 }
@@ -730,7 +734,7 @@ int oncp_connect(struct openconnect_info *vpninfo)
 	buf_free(reqbuf);
 
 	vpninfo->partial_rec_size = 0;
-	free(vpninfo->cstp_pkt);
+	free_pkt(vpninfo, vpninfo->cstp_pkt);
 	vpninfo->cstp_pkt = NULL;
 
 	return ret;
@@ -858,7 +862,7 @@ int oncp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 
 		len = receive_mtu + vpninfo->pkt_trailer;
 		if (!vpninfo->cstp_pkt) {
-			vpninfo->cstp_pkt = malloc(sizeof(struct pkt) + len);
+			vpninfo->cstp_pkt = alloc_pkt(vpninfo, len);
 			if (!vpninfo->cstp_pkt) {
 				vpn_progress(vpninfo, PRG_ERR, _("Allocation failed\n"));
 				break;
@@ -963,7 +967,8 @@ int oncp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 			}
 
 			/* OK, we have a whole packet, and we have stuff after it */
-			queue_new_packet(&vpninfo->incoming_queue, vpninfo->cstp_pkt->data, iplen);
+			queue_new_packet(vpninfo, &vpninfo->incoming_queue,
+					 vpninfo->cstp_pkt->data, iplen);
 			kmplen -= iplen;
 			if (kmplen) {
 				/* Still data packets to come in this KMP300 */
@@ -1080,7 +1085,7 @@ int oncp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 		}
 		/* Don't free the 'special' packets */
 		if (vpninfo->current_ssl_pkt == vpninfo->deflate_pkt) {
-			free(vpninfo->pending_deflated_pkt);
+			free_pkt(vpninfo, vpninfo->pending_deflated_pkt);
 			vpninfo->pending_deflated_pkt = NULL;
 		} else if (vpninfo->current_ssl_pkt == &esp_enable_pkt) {
 			/* Only set the ESP state to connected and actually start
@@ -1091,7 +1096,7 @@ int oncp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 			vpninfo->dtls_state = DTLS_ESTABLISHED;
 			work_done = 1;
 		} else {
-			free(vpninfo->current_ssl_pkt);
+			free_pkt(vpninfo, vpninfo->current_ssl_pkt);
 		}
 		vpninfo->current_ssl_pkt = NULL;
 	}
@@ -1214,7 +1219,7 @@ int oncp_bye(struct openconnect_info *vpninfo, const char *reason)
 
 	orig_path = vpninfo->urlpath;
 	vpninfo->urlpath = strdup("dana-na/auth/logout.cgi"); /* redirect segfaults without strdup */
-	ret = do_https_request(vpninfo, "GET", NULL, NULL, &res_buf, 0);
+	ret = do_https_request(vpninfo, "GET", NULL, NULL, &res_buf, NULL, 0);
 	free(vpninfo->urlpath);
 	vpninfo->urlpath = orig_path;
 
@@ -1254,7 +1259,7 @@ int oncp_esp_send_probes(struct openconnect_info *vpninfo)
 		monitor_except_fd(vpninfo, dtls);
 	}
 
-	pkt = malloc(sizeof(*pkt) + 1 + vpninfo->pkt_trailer);
+	pkt = alloc_pkt(vpninfo, 1 + vpninfo->pkt_trailer);
 	if (!pkt)
 		return -ENOMEM;
 
@@ -1267,7 +1272,7 @@ int oncp_esp_send_probes(struct openconnect_info *vpninfo)
 		    send(vpninfo->dtls_fd, (void *)&pkt->esp, pktlen, 0) < 0)
 			vpn_progress(vpninfo, PRG_DEBUG, _("Failed to send ESP probe\n"));
 	}
-	free(pkt);
+	free_pkt(vpninfo, pkt);
 
 	vpninfo->dtls_times.last_tx = time(&vpninfo->new_dtls_started);
 

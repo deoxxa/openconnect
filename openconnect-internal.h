@@ -53,7 +53,7 @@
  * See https://stackoverflow.com/a/44163934
  */
 #ifdef _WIN32
-#define DEVNULL "NUL"
+#define DEVNULL "NUL:"
 #else
 #define DEVNULL "/dev/null"
 #endif
@@ -142,6 +142,7 @@
 /****************************************************************************/
 
 struct pkt {
+	int alloc_len;
 	int len;
 	struct pkt *next;
 	union {
@@ -735,12 +736,19 @@ struct openconnect_info {
 	int dtls_pass_tos;
 	int dtls_tos_proto, dtls_tos_optname;
 
+	/* An optimisation for the case where our own code is the only
+	 * thing that *could* write to the cmd_fd, to avoid constantly
+	 * polling on it while we're busy shovelling packets. */
+	int need_poll_cmd_fd;
+	int cmd_fd_internal;
+
 	int cmd_fd;
 	int cmd_fd_write;
 	int got_cancel_cmd;
 	int got_pause_cmd;
 	char cancel_type;
 
+	struct pkt_q free_queue;
 	struct pkt_q incoming_queue;
 	struct pkt_q outgoing_queue;
 	struct pkt_q tcp_control_queue;		/* Control packets to be sent via TCP */
@@ -785,6 +793,35 @@ struct openconnect_info {
 	int (*ssl_gets)(struct openconnect_info *vpninfo, char *buf, size_t len);
 	int (*ssl_write)(struct openconnect_info *vpninfo, char *buf, size_t len);
 };
+
+
+static inline struct pkt *alloc_pkt(struct openconnect_info *vpninfo, int len)
+{
+	int alloc_len = sizeof(struct pkt) + len;
+
+	if (vpninfo->free_queue.head &&
+	    vpninfo->free_queue.head->alloc_len >= alloc_len)
+		return dequeue_packet(&vpninfo->free_queue);
+
+	if (alloc_len < 2048)
+		alloc_len = 2048;
+
+	struct pkt *pkt = malloc(alloc_len);
+	if (pkt)
+		pkt->alloc_len = alloc_len;
+	return pkt;
+}
+
+static inline void free_pkt(struct openconnect_info *vpninfo, struct pkt *pkt)
+{
+	if (!pkt)
+		return;
+
+	if (vpninfo->free_queue.count < vpninfo->max_qlen * 2)
+		requeue_packet(&vpninfo->free_queue, pkt);
+	else
+		free(pkt);
+}
 
 #ifdef _WIN32
 #define monitor_read_fd(_v, _n) _v->_n##_monitored |= FD_READ
@@ -1226,7 +1263,8 @@ int openconnect_install_ctx_verify(struct openconnect_info *vpninfo,
 
 /* mainloop.c */
 int tun_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable);
-int queue_new_packet(struct pkt_q *q, void *buf, int len);
+int queue_new_packet(struct openconnect_info *vpninfo,
+		     struct pkt_q *q, void *buf, int len);
 int keepalive_action(struct keepalive_info *ka, int *timeout);
 int ka_stalled_action(struct keepalive_info *ka, int *timeout);
 int ka_check_deadline(int *timeout, time_t now, time_t due);
@@ -1324,9 +1362,9 @@ int process_proxy(struct openconnect_info *vpninfo, int ssl_sock);
 int internal_parse_url(const char *url, char **res_proto, char **res_host,
 		       int *res_port, char **res_path, int default_port);
 char *internal_get_url(struct openconnect_info *vpninfo);
-int do_https_request(struct openconnect_info *vpninfo, const char *method,
-		     const char *request_body_type, struct oc_text_buf *request_body,
-		     char **form_buf, int fetch_redirect);
+int do_https_request(struct openconnect_info *vpninfo, const char *method, const char *request_body_type,
+		     struct oc_text_buf *request_body, char **form_buf,
+		     int (*header_cb)(struct openconnect_info *, char *, char *), int fetch_redirect);
 int http_add_cookie(struct openconnect_info *vpninfo, const char *option,
 		    const char *value, int replace);
 int internal_split_cookies(struct openconnect_info *vpninfo, int replace, const char *def_cookie);

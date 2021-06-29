@@ -560,7 +560,7 @@ static int https_request_wrapper(struct openconnect_info *vpninfo, struct oc_tex
 	vpninfo->dump_http_traffic = 0; /* Do not print sensitive info */
 #endif
 
-	result = do_https_request(vpninfo, method, req_type, request_body, resp_buf, rdrfetch);
+	result = do_https_request(vpninfo, method, req_type, request_body, resp_buf, NULL, rdrfetch);
 
 #ifndef INSECURE_DEBUGGING
 	if (*resp_buf && vpninfo->verbose >= PRG_DEBUG) {

@@ -283,12 +283,13 @@ static int process_attr(struct openconnect_info *vpninfo, struct oc_vpn_option *
 				     _("Failed to handle IPv6 address\n"));
 			return -EINVAL;
 		}
-		new_ip_info->addr6 = add_option_dup(new_opts, "ip6addr", buf, -1);
+		if (!vpninfo->disable_ipv6) {
+			new_ip_info->addr6 = add_option_dup(new_opts, "ip6addr", buf, -1);
 
-		i = strlen(buf);
-		snprintf(buf + i, sizeof(buf) - i, "/%d", data[16]);
-		new_ip_info->netmask6 = add_option_dup(new_opts, "ip6netmask", buf, -1);
-
+			i = strlen(buf);
+			snprintf(buf + i, sizeof(buf) - i, "/%d", data[16]);
+			new_ip_info->netmask6 = add_option_dup(new_opts, "ip6netmask", buf, -1);
+		}
 		vpn_progress(vpninfo, PRG_DEBUG, _("Received internal IPv6 address %s\n"), buf);
 		break;
 
@@ -375,7 +376,7 @@ static int process_attr(struct openconnect_info *vpninfo, struct oc_vpn_option *
 		if (!attrlen)
 			goto badlen;
 		if (!data[attrlen-1])
-		    attrlen--;
+			attrlen--;
 		vpn_progress(vpninfo, PRG_DEBUG, _("Received DNS search domain %.*s\n"),
 			     attrlen, (char *)data);
 		new_ip_info->domain = add_option_dup(new_opts, "search", (char *)data, attrlen);
@@ -2581,7 +2582,7 @@ int pulse_connect(struct openconnect_info *vpninfo)
 	monitor_read_fd(vpninfo, ssl);
 	monitor_except_fd(vpninfo, ssl);
 
-	free(vpninfo->cstp_pkt);
+	free_pkt(vpninfo, vpninfo->cstp_pkt);
 	vpninfo->cstp_pkt = NULL;
 
 	return ret;
@@ -2611,7 +2612,7 @@ int pulse_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 		int len, payload_len;
 
 		if (!pkt) {
-			pkt = vpninfo->cstp_pkt = malloc(sizeof(struct pkt) + receive_mtu);
+			pkt = vpninfo->cstp_pkt = alloc_pkt(vpninfo, receive_mtu);
 			if (!pkt) {
 				vpn_progress(vpninfo, PRG_ERR, _("Allocation failed\n"));
 				break;
@@ -2798,10 +2799,10 @@ int pulse_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 		}
 		/* Don't free the 'special' packets */
 		if (vpninfo->current_ssl_pkt == vpninfo->deflate_pkt) {
-			free(vpninfo->pending_deflated_pkt);
+			free_pkt(vpninfo, vpninfo->pending_deflated_pkt);
 			vpninfo->pending_deflated_pkt = NULL;
 		} else
-			free(vpninfo->current_ssl_pkt);
+			free_pkt(vpninfo, vpninfo->current_ssl_pkt);
 
 		vpninfo->current_ssl_pkt = NULL;
 	}

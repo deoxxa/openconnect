@@ -109,6 +109,7 @@ static int authgroup_set;
 static int last_form_empty;
 
 static int sig_cmd_fd;
+static struct openconnect_info *sig_vpninfo;
 
 static void add_form_field(char *field);
 
@@ -140,7 +141,7 @@ static void __attribute__ ((format(printf, 3, 4)))
 #elif defined(_WIN32) || defined(__native_client__)
 /*
  * FIXME: Perhaps we could implement syslog_progress() using these APIs:
- * http://msdn.microsoft.com/en-us/library/windows/desktop/aa364148%28v=vs.85%29.aspx
+ * https://docs.microsoft.com/en-us/windows/win32/etw/tracing-events
  */
 #else /* !__ANDROID__ && !_WIN32 && !__native_client__ */
 #include <syslog.h>
@@ -208,6 +209,7 @@ enum {
 	OPT_PROTOCOL,
 	OPT_PASSTOS,
 	OPT_VERSION,
+	OPT_SERVER,
 };
 
 #ifdef __sun__
@@ -300,6 +302,7 @@ static const struct option long_options[] = {
 #elif defined(OPENCONNECT_OPENSSL)
 	OPTION("openssl-ciphers", 1, OPT_CIPHERSUITES),
 #endif
+	OPTION("server", 1, OPT_SERVER),
 	OPTION(NULL, 0, 0)
 };
 
@@ -627,7 +630,7 @@ static char *convert_to_utf8(char *legacy, int free_it)
 static void helpmessage(void)
 {
 	printf(_("For assistance with OpenConnect, please see the web page at\n"
-		 "  http://www.infradead.org/openconnect/mail.html\n"));
+		 "  https://www.infradead.org/openconnect/mail.html\n"));
 }
 
 static void print_build_opts(void)
@@ -797,6 +800,8 @@ static void handle_signal(int sig)
 	if (write(sig_cmd_fd, &cmd, 1) < 0) {
 	/* suppress warn_unused_result */
 	}
+	if (sig_vpninfo)
+		sig_vpninfo->need_poll_cmd_fd = 1;
 }
 #else /* _WIN32 */
 static const char *default_vpncscript;
@@ -881,6 +886,7 @@ static void usage(void)
 	printf("      --cafile=FILE               %s\n", _("Cert file for server verification"));
 
 	printf("\n%s:\n", _("Internet connectivity"));
+	printf("      --server=SERVER             %s\n", _("Set VPN server"));
 	printf("  -P, --proxy=URL                 %s\n", _("Set proxy server"));
 	printf("      --proxy-auth=METHODS        %s\n", _("Set proxy authentication methods"));
 	printf("      --no-proxy                  %s\n", _("Disable proxy"));
@@ -955,7 +961,6 @@ static void usage(void)
 	printf("      --no-http-keepalive         %s\n", _("Disable HTTP connection re-use"));
 	printf("      --no-xmlpost                %s\n", _("Do not attempt XML POST authentication"));
 	printf("      --allow-insecure-crypto     %s\n", _("Allow use of the ancient, insecure 3DES and RC4 ciphers"));
-	printf("  				  %s\n", _("(and attempt to override OS crypto policies)"));
 
 	printf("\n");
 
@@ -1008,7 +1013,7 @@ static inline char *__dup_config_arg(char **argv, char *config_arg)
 	char *res;
 
 	if (config_file || is_arg_utf8(config_arg))
-	    return xstrdup(config_arg);
+		return xstrdup(config_arg);
 
 	res = convert_arg_to_utf8(argv, config_arg);
 	/* Force a copy, even if conversion failed */
@@ -1367,6 +1372,10 @@ static int autocomplete(int argc, char **argv)
 				}
 				break;
 
+			case OPT_SERVER: /* --server */
+				autocomplete_special("HOSTNAME", comp_opt, prefixlen, NULL);
+				break;
+
 			case 'i': /* --interface */
 				/* FIXME: Enumerate available tun devices */
 				break;
@@ -1502,7 +1511,8 @@ static void print_connection_stats(void *_vpninfo, const struct oc_stats *stats)
 }
 
 #ifndef _WIN32
-static int background_self(struct openconnect_info *vpninfo, char *pidfile) {
+static int background_self(struct openconnect_info *vpninfo, char *pidfile)
+{
 	FILE *fp = NULL;
 	int pid;
 
@@ -1514,6 +1524,7 @@ static int background_self(struct openconnect_info *vpninfo, char *pidfile) {
 		if (!fp) {
 			fprintf(stderr, _("Failed to open '%s' for write: %s\n"),
 				pidfile, strerror(errno));
+			sig_vpninfo = NULL;
 			openconnect_vpninfo_free(vpninfo);
 			exit(1);
 		}
@@ -1530,6 +1541,7 @@ static int background_self(struct openconnect_info *vpninfo, char *pidfile) {
 		vpn_progress(vpninfo, PRG_INFO,
 			     _("Continuing in background; pid %d\n"),
 			     pid);
+		sig_vpninfo = NULL;
 		openconnect_vpninfo_free(vpninfo);
 		exit(0);
 	}
@@ -1539,7 +1551,8 @@ static int background_self(struct openconnect_info *vpninfo, char *pidfile) {
 }
 #endif /* _WIN32 */
 
-static void fully_up_cb(void *_vpninfo) {
+static void fully_up_cb(void *_vpninfo)
+{
 	struct openconnect_info *vpninfo = _vpninfo;
 
 	print_connection_info(vpninfo);
@@ -1616,6 +1629,29 @@ int main(int argc, char **argv)
 	fprintf(stderr,
 		_("WARNING: This build is intended only for debugging purposes and\n"
 		  "         may allow you to establish insecure connections.\n"));
+#endif
+
+	/* Some systems have a crypto policy which completely prevents DTLSv1.0
+	 * from being used, which is entirely pointless and will just drive
+	 * users back to the crappy proprietary clients. Or drive OpenConnect
+	 * to implement its own DTLS instead of using the system crypto libs.
+	 * We're happy to conform by default to the system policy which is
+	 * carefully curated to keep up to date with developments in crypto
+	 * attacks —  but we also *need* to be able to override it and connect
+	 * anyway, when the user asks us to. Just as we *can* continue even
+	 * when the server has an invalid certificate, based on user input.
+	 * It was a massive oversight that GnuTLS implemented the system
+	 * policy *without* that basic override facility, so until/unless
+	 * it actually gets implemented properly we have to just disable it.
+	 * We can't do this from openconnect_init_ssl() since that would be
+	 * calling setenv() from a library in someone else's process. And
+	 * thankfully we don't really need to since the auth-dialogs don't
+	 * care; this is mostly for the DTLS connection.
+	 */
+#ifdef OPENCONNECT_GNUTLS
+	setenv("GNUTLS_SYSTEM_PRIORITY_FILE", DEVNULL, 0);
+#else
+	setenv("OPENSSL_CONF", DEVNULL, 0);
 #endif
 
 	openconnect_init_ssl();
@@ -1722,12 +1758,9 @@ int main(int argc, char **argv)
 			openconnect_set_pfs(vpninfo, 1);
 			break;
 		case OPT_ALLOW_INSECURE_CRYPTO:
-			ret = openconnect_set_allow_insecure_crypto(vpninfo, 1);
-			if (ret == -ENOENT)
-				fprintf(stderr, _("WARNING: cannot enable insecure 3DES and/or RC4 ciphers, because the library\n"
+			if (openconnect_set_allow_insecure_crypto(vpninfo, 1)) {
+				fprintf(stderr, _("Cannot enable insecure 3DES or RC4 ciphers, because the library\n"
 						  "%s no longer supports them.\n"), openconnect_get_tls_library_version());
-			else if (ret < 0) {
-				fprintf(stderr, _("Unknown error while enabling insecure crypto.\n"));
 				exit(1);
 			}
 			break;
@@ -2006,6 +2039,10 @@ int main(int argc, char **argv)
 
 			vpninfo->ciphersuite_config = dup_config_arg();
 			break;
+		case OPT_SERVER:
+			if (openconnect_parse_url(vpninfo, config_arg))
+				exit(1);
+			break;
 		default:
 			usage();
 		}
@@ -2014,10 +2051,10 @@ int main(int argc, char **argv)
 	if (gai_overrides)
 		openconnect_override_getaddrinfo(vpninfo, gai_override_cb);
 
-	if (optind < argc - 1) {
+	if (optind < argc - (vpninfo->hostname ? 0 : 1)) {
 		fprintf(stderr, _("Too many arguments on command line\n"));
 		usage();
-	} else if (optind > argc - 1) {
+	} else if (optind > argc - (vpninfo->hostname ? 0 : 1)) {
 		fprintf(stderr, _("No server specified\n"));
 		usage();
 	}
@@ -2054,11 +2091,13 @@ int main(int argc, char **argv)
 	sigaction(SIGUSR2, &sa, NULL);
 #endif /* !_WIN32 */
 
+	sig_vpninfo = vpninfo;
 	sig_cmd_fd = openconnect_setup_cmd_pipe(vpninfo);
 	if (sig_cmd_fd < 0) {
 		fprintf(stderr, _("Error opening cmd pipe\n"));
 		exit(1);
 	}
+	vpninfo->cmd_fd_internal = 1;
 
 	if (vpninfo->certinfo[0].key && do_passphrase_from_fsid)
 		openconnect_passphrase_from_fsid(vpninfo);
@@ -2112,12 +2151,14 @@ int main(int argc, char **argv)
 			printf("RESOLVE='%s:%.*s'\n", vpninfo->hostname, l, p);
 		} else
 			printf("RESOLVE=");
+		sig_vpninfo = NULL;
 		openconnect_vpninfo_free(vpninfo);
 		exit(0);
 	} else if (cookieonly) {
 		printf("%s\n", vpninfo->cookie);
 		if (cookieonly == 1) {
 			/* We use cookieonly=2 for 'print it and continue' */
+			sig_vpninfo = NULL;
 			openconnect_vpninfo_free(vpninfo);
 			exit(0);
 		}
@@ -2146,7 +2187,7 @@ int main(int argc, char **argv)
 		vpn_progress(vpninfo, PRG_INFO,
 			     _("No --script argument provided; DNS and routing are not configured\n"));
 		vpn_progress(vpninfo, PRG_INFO,
-			     _("See http://www.infradead.org/openconnect/vpnc-script.html\n"));
+			     _("See https://www.infradead.org/openconnect/vpnc-script.html\n"));
 	}
 
 
@@ -2210,6 +2251,7 @@ int main(int argc, char **argv)
 		break;
 	}
 
+	sig_vpninfo = NULL;
 	openconnect_vpninfo_free(vpninfo);
 	exit(ret);
 }
@@ -2290,9 +2332,9 @@ static int validate_peer_cert(void *_vpninfo, const char *reason)
 			if (!err)
 				return 0;
 			else if (err < 0) {
-				 vpn_progress(vpninfo, PRG_ERR,
-					      _("Could not check server's certificate against %s\n"),
-					      this->fingerprint);
+				vpn_progress(vpninfo, PRG_ERR,
+					     _("Could not check server's certificate against %s\n"),
+					     this->fingerprint);
 			}
 		}
 	}
@@ -2626,7 +2668,7 @@ static int lock_token(void *tokdata)
 	/* FIXME: Actually lock the file */
 	err = openconnect_read_file(vpninfo, token_filename, &file_token);
 	if (err < 0)
-	    return err;
+		return err;
 
 	err = openconnect_set_token_mode(vpninfo, vpninfo->token_mode, file_token);
 	free(file_token);

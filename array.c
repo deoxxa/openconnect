@@ -48,7 +48,8 @@
 
 #include "openconnect-internal.h"
 
-static struct oc_auth_form *plain_auth_form() {
+static struct oc_auth_form *plain_auth_form(void)
+{
         struct oc_auth_form *form;
         struct oc_form_opt *opt, *opt2, *opt3;
 
@@ -113,7 +114,7 @@ int array_obtain_cookie(struct openconnect_info *vpninfo)
 	char *resp_buf = NULL;
 	ret = do_https_request(vpninfo, "POST",
 			       "application/x-www-form-urlencoded",
-			       req_buf, &resp_buf, 2);
+			       req_buf, &resp_buf, NULL, 2);
 	free(resp_buf);
 	if (ret <= 0)
 		goto out;
@@ -791,7 +792,7 @@ int array_connect(struct openconnect_info *vpninfo)
 	}
 	buf_free(reqbuf);
 
-	free(vpninfo->cstp_pkt);
+	free_pkt(vpninfo, vpninfo->cstp_pkt);
 	vpninfo->cstp_pkt = NULL;
 
 	vpninfo->ip_info.mtu = 1400;
@@ -821,7 +822,7 @@ int array_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 		int len;
 
 		if (!vpninfo->cstp_pkt) {
-			vpninfo->cstp_pkt = malloc(sizeof(struct pkt) + receive_mtu);
+			vpninfo->cstp_pkt = alloc_pkt(vpninfo, receive_mtu);
 			if (!vpninfo->cstp_pkt) {
 				vpn_progress(vpninfo, PRG_ERR, _("Allocation failed\n"));
 				break;
@@ -908,7 +909,7 @@ int array_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 		/* Don't free the 'special' packets */
 		if (vpninfo->current_ssl_pkt != &dpd_pkt &&
 		    vpninfo->current_ssl_pkt != &nodtls_pkt)
-			free(vpninfo->current_ssl_pkt);
+			free_pkt(vpninfo, vpninfo->current_ssl_pkt);
 
 		vpninfo->current_ssl_pkt = NULL;
 	}
@@ -1056,7 +1057,7 @@ int array_dtls_mainloop(struct openconnect_info *vpninfo, int *timeout, int read
 			 * may be in active use while we attempt to connect DTLS.
 			 * So use vpninfo->dtls_pkt for this. */
 			if (!vpninfo->dtls_pkt)
-				vpninfo->dtls_pkt = malloc(sizeof(struct pkt) + receive_mtu);
+				vpninfo->dtls_pkt = alloc_pkt(vpninfo, receive_mtu);
 			if (!vpninfo->dtls_pkt) {
 				vpn_progress(vpninfo, PRG_ERR, _("Allocation failed\n"));
 				dtls_close(vpninfo);
@@ -1166,7 +1167,7 @@ int array_dtls_mainloop(struct openconnect_info *vpninfo, int *timeout, int read
 		unsigned char *buf;
 
 		if (!vpninfo->dtls_pkt) {
-			vpninfo->dtls_pkt = malloc(sizeof(struct pkt) + len);
+			vpninfo->dtls_pkt = alloc_pkt(vpninfo, len);
 			if (!vpninfo->dtls_pkt) {
 				vpn_progress(vpninfo, PRG_ERR, _("Allocation failed\n"));
 				break;
@@ -1277,7 +1278,7 @@ int array_dtls_mainloop(struct openconnect_info *vpninfo, int *timeout, int read
 		vpn_progress(vpninfo, PRG_TRACE,
 			     _("Sent DTLS packet of %d bytes; DTLS send returned %d\n"),
 			     this->len, ret);
-		free(this);
+		free_pkt(vpninfo, this);
 	}
 
 	return work_done;
@@ -1296,7 +1297,7 @@ int array_bye(struct openconnect_info *vpninfo, const char *reason)
 
 	orig_path = vpninfo->urlpath;
 	vpninfo->urlpath = strdup("prx/000/http/localhost/logout"); /* redirect segfaults without strdup */
-	ret = do_https_request(vpninfo, "GET", NULL, NULL, &res_buf, 0);
+	ret = do_https_request(vpninfo, "GET", NULL, NULL, &res_buf, NULL, 0);
 	free(vpninfo->urlpath);
 	vpninfo->urlpath = orig_path;
 

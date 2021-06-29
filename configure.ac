@@ -26,6 +26,7 @@ symver_getline=
 symver_asprintf=
 symver_vasprintf=
 symver_win32_strerror=
+symver_win32_setenv=
 
 # Autoconf is stupid and if the first time it needs to find the C compiler
 # is conditional (as it is here for some of the MinGW checks), it forgets
@@ -60,6 +61,7 @@ case $host_os in
     # For asprintf()
     AC_DEFINE(_GNU_SOURCE, 1, [_GNU_SOURCE])
     symver_win32_strerror="openconnect__win32_strerror;"
+    symver_win32_setenv="openconnect__win32_setenv;"
     # Win32 does have the SCard API
     system_pcsc_libs="-lwinscard"
     system_pcsc_cflags=
@@ -133,7 +135,7 @@ if test "$with_vpnc_script" = "yes" || test "$with_vpnc_script" = ""; then
       if ! test -x "$with_vpnc_script"; then
 	 AC_MSG_ERROR([${with_vpnc_script} does not seem to be executable.]
  [OpenConnect will not function correctly without a vpnc-script.]
- [See http://www.infradead.org/openconnect/vpnc-script.html for more details.]
+ [See https://www.infradead.org/openconnect/vpnc-script.html for more details.]
  []
  [If you are building a distribution package, please ensure that your]
  [packaging is correct, and that a vpnc-script will be installed when the]
@@ -152,7 +154,7 @@ if test "$with_vpnc_script" = "yes" || test "$with_vpnc_script" = ""; then
 elif test "$with_vpnc_script" = "no"; then
    AC_ERROR([You cannot disable vpnc-script.]
    [OpenConnect will not function correctly without it.]
-   [See http://www.infradead.org/openconnect/vpnc-script.html])
+   [See https://www.infradead.org/openconnect/vpnc-script.html])
 elif test "$have_win" = "yes"; then
    # Oh Windows how we hate thee. If user specifies a vpnc-script and it contains
    # backslashes, double them all up to survive escaping.
@@ -207,6 +209,7 @@ AC_SUBST(SYMVER_GETLINE, $symver_getline)
 AC_SUBST(SYMVER_ASPRINTF, $symver_asprintf)
 AC_SUBST(SYMVER_VASPRINTF, $symver_vasprintf)
 AC_SUBST(SYMVER_WIN32_STRERROR, $symver_win32_strerror)
+AC_SUBST(SYMVER_WIN32_SETENV, $symver_win32_setenv)
 
 AS_COMPILER_FLAGS(WFLAGS,
         "-Wall

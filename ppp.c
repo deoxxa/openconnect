@@ -76,7 +76,7 @@ static struct pkt *hdlc_into_new_pkt(struct openconnect_info *vpninfo, struct pk
 	/* Every byte in payload and 2-byte FCS potentially expands to two bytes,
 	 * plus 2 for flag (0x7e) at start and end. We know that we will output
 	 * at least 4 bytes so we can stash those in the header. */
-	struct pkt *p = malloc(sizeof(struct pkt) + len*2 + 2);
+	struct pkt *p = alloc_pkt(vpninfo, len*2 + 2);
 	if (!p)
 		return NULL;
 
@@ -190,7 +190,8 @@ static const char *lcp_names[] = {
 	"Discard-Request",
 };
 
-inline static const char *proto_names(uint16_t proto) {
+inline static const char *proto_names(uint16_t proto)
+{
 	static char unknown[21];
 
 	switch (proto) {
@@ -258,27 +259,20 @@ int ppp_reset(struct openconnect_info *vpninfo)
 	ppp->ppp_state = PPPS_DEAD;
 	ppp->out_asyncmap = 0;
 	ppp->out_lcp_opts = BIT_MRU | BIT_MAGIC | BIT_PFCOMP | BIT_ACCOMP | BIT_MRU_COAX;
+	ppp->check_http_response = 0;
 
 	switch (ppp->encap) {
 	case PPP_ENCAP_F5:
-		/* XX: F5 server cancels our IP address allocation if we PPP-terminate */
-		ppp->no_terminate_on_pause = 1;
 		ppp->encap_len = 4;
 		break;
 
 	case PPP_ENCAP_FORTINET:
 		/* XX: Fortinet server rejects asyncmap and header compression. Don't blame me. */
-		ppp->no_terminate_on_pause = 1;
 		ppp->out_lcp_opts &= ~(BIT_PFCOMP | BIT_ACCOMP);
 		ppp->encap_len = 6;
-		ppp->check_http_response = 1;
 		break;
 
 	case PPP_ENCAP_F5_HDLC:
-		/* XX: F5 server cancels our IP address allocation if we PPP-terminate */
-		ppp->no_terminate_on_pause = 1;
-		/* fall through */
-
 	case PPP_ENCAP_RFC1662_HDLC:
 		ppp->encap_len = 0;
 		ppp->hdlc = 1;
@@ -360,10 +354,10 @@ static int buf_append_ppp_tlv_be32(struct oc_text_buf *buf, int tag, uint32_t va
 	return buf_append_ppp_tlv(buf, tag, 4, &val_be);
 }
 
-static int queue_config_packet(struct openconnect_info *vpninfo,
-				uint16_t proto, int id, int code, int len, const void *payload)
+static int queue_config_packet(struct openconnect_info *vpninfo, uint16_t proto,
+			       int id, int code, int len, const void *payload)
 {
-	struct pkt *p = malloc(sizeof(struct pkt) + len + 4);
+	struct pkt *p = alloc_pkt(vpninfo, len + 4);
 
 	if (!p)
 		return -ENOMEM;
@@ -888,8 +882,9 @@ static int handle_state_transition(struct openconnect_info *vpninfo, int dtls,
 
 		/* Drop any failed outgoing packet from previous connection;
 		 * we need to reconfigure before we can send data packets. */
-		free(vpninfo->current_ssl_pkt);
+		free_pkt(vpninfo, vpninfo->current_ssl_pkt);
 		vpninfo->current_ssl_pkt = NULL;
+		vpninfo->partial_rec_size = 0;
 		ppp->ppp_state = PPPS_ESTABLISH;
 		/* fall through */
 
@@ -973,11 +968,11 @@ static int handle_state_transition(struct openconnect_info *vpninfo, int dtls,
 		/* XX: When we pause and reconnect, we expect the auth cookie/session (external to the
 		 * PPP layer) to remain valid, and to negotiate the same IP addresses on reconnection.
 		 *
-		 * However, some servers cancel our session or cancel our IP address allocation if we
+		 * However, most servers cancel our session or cancel our IP address allocation if we
 		 * TERMINATE at the PPP layer, so we shouldn't do it when pausing.
 		 */
 		if (vpninfo->got_cancel_cmd ||
-		    (vpninfo->got_pause_cmd && !ppp->no_terminate_on_pause))
+		    (vpninfo->got_pause_cmd && ppp->terminate_on_pause))
 			ppp->ppp_state = PPPS_TERMINATE;
 		else
 			break;
@@ -1035,7 +1030,8 @@ static int handle_state_transition(struct openconnect_info *vpninfo, int dtls,
 	return ret;
 }
 
-static inline void add_ppp_header(struct pkt *p, struct oc_ppp *ppp, int proto) {
+static inline void add_ppp_header(struct pkt *p, struct oc_ppp *ppp, int proto)
+{
 	unsigned char *ph = p->data;
 	/* XX: store PPP header, in reverse */
 	*--ph = proto & 0xff;
@@ -1088,7 +1084,7 @@ static int ppp_mainloop(struct openconnect_info *vpninfo, int dtls,
 		int len, payload_len, next_len;
 
 		if (!vpninfo->cstp_pkt) {
-			vpninfo->cstp_pkt = malloc(sizeof(struct pkt) + receive_mtu);
+			vpninfo->cstp_pkt = alloc_pkt(vpninfo, receive_mtu);
 			if (!vpninfo->cstp_pkt) {
 				vpn_progress(vpninfo, PRG_ERR, _("Allocation failed\n"));
 				break;
@@ -1101,13 +1097,28 @@ static int ppp_mainloop(struct openconnect_info *vpninfo, int dtls,
 		 * the payload later. */
 		rsv_hdr_size = ppp->encap_len + ppp->exp_ppp_hdr_size;
 
-		/* Load the encap header to end up with the payload where we expect it */
+		/* This should never happen here as we should complain about it
+		 * before setting ->partial_rec_size in the first place, but be
+		 * paranoid. This would mean we just read zero (or negative!) */
+		if (vpninfo->partial_rec_size >= receive_mtu + rsv_hdr_size) {
+			vpninfo->quit_reason = "Payload exceeds MTU";
+			vpn_progress(vpninfo, PRG_ERR,
+				     _("PPP payload exceeds receive buffer\n"));
+			return -EINVAL;
+		}
+
+		/* Load the encap header to end up with the payload where we expect it. Also,
+		 * if our previous (D)TLS read contained an incomplete PPP packet, we need
+		 * to append to it. */
 		eh = this->data - rsv_hdr_size;
-		len = ssl_nonblock_read(vpninfo, dtls, eh, receive_mtu + rsv_hdr_size);
+		len = ssl_nonblock_read(vpninfo, dtls, eh + vpninfo->partial_rec_size,
+					receive_mtu + rsv_hdr_size - vpninfo->partial_rec_size);
 		if (!len)
 			break;
 		if (len < 0)
 			goto do_reconnect;
+		len += vpninfo->partial_rec_size;
+		vpninfo->partial_rec_size = 0;
 
 		/* XX: Some protocols require us to check for an HTTP response in place
 		 * of the first packet
@@ -1129,11 +1140,11 @@ static int ppp_mainloop(struct openconnect_info *vpninfo, int dtls,
 		 *   len: number of bytes-from-the-wire
 		 */
 
-		if (len < 8) {
+		if (len < (ppp->encap_len ? : 8)) {
 		short_pkt:
-			vpn_progress(vpninfo, PRG_ERR, _("Short packet received (%d bytes)\n"), len);
-			vpninfo->quit_reason = "Short packet received";
-			return 1;
+			vpn_progress(vpninfo, PRG_DEBUG, _("Short packet received (%d bytes). Waiting for more.\n"), len);
+			vpninfo->partial_rec_size = len;
+			continue;
 		}
 
 		if (vpninfo->dump_http_traffic)
@@ -1157,10 +1168,19 @@ static int ppp_mainloop(struct openconnect_info *vpninfo, int dtls,
 
 			if (len < 4 + payload_len) {
 			incomplete_pkt:
-				vpn_progress(vpninfo, PRG_ERR,
-					     _("Packet is incomplete. Received %d bytes on wire (includes %d encap) but header payload_len is %d\n"),
+				/* We've read a partial PPP packet. Save the offset for our next read. */
+				vpninfo->partial_rec_size = len;
+				if (vpninfo->partial_rec_size >= receive_mtu + rsv_hdr_size) {
+					vpninfo->quit_reason = "Payload exceeds MTU";
+					vpn_progress(vpninfo, PRG_ERR,
+						     _("PPP payload len %d exceeds receive buffer %d\n"),
+						     payload_len, receive_mtu + rsv_hdr_size);
+					dump_buf_hex(vpninfo, PRG_ERR, '<', eh, len);
+					return -EINVAL;
+				}
+				vpn_progress(vpninfo, PRG_DEBUG,
+					     _("PPP packet is incomplete. Received %d bytes on wire (includes %d encap) but header payload_len is %d. Waiting for more.\n"),
 					     len, ppp->encap_len, payload_len);
-				dump_buf_hex(vpninfo, PRG_ERR, '<', eh, len);
 				continue;
 			}
 			break;
@@ -1277,7 +1297,6 @@ static int ppp_mainloop(struct openconnect_info *vpninfo, int dtls,
 				if (this == vpninfo->cstp_pkt)
 					vpninfo->cstp_pkt = NULL;
 				work_done = 1;
-				continue;
 			}
 			break;
 
@@ -1309,7 +1328,7 @@ static int ppp_mainloop(struct openconnect_info *vpninfo, int dtls,
 			 * full sized packet so it can remain in vpninfo->cstp_pkt and be reused
 			 * for receiving the next packet, if it's something other than data and
 			 * doesn't get queued and freed. */
-			this = vpninfo->cstp_pkt = malloc(sizeof(struct pkt) + receive_mtu);
+			this = vpninfo->cstp_pkt = alloc_pkt(vpninfo, receive_mtu);
 			if (!this)
 				return -ENOMEM;
 			eh = this->data - rsv_hdr_size;
@@ -1360,7 +1379,7 @@ static int ppp_mainloop(struct openconnect_info *vpninfo, int dtls,
 			return 1;
 		}
 
-		free(this);
+		free_pkt(vpninfo, this);
 		vpninfo->current_ssl_pkt = NULL;
 	}
 
@@ -1445,7 +1464,7 @@ static int ppp_mainloop(struct openconnect_info *vpninfo, int dtls,
 						 proto == PPP_LCP ? ASYNCMAP_LCP : ppp->out_asyncmap);
 			if (!this)
 				return 1; /* XX */
-			free(vpninfo->current_ssl_pkt);
+			free_pkt(vpninfo, vpninfo->current_ssl_pkt);
 			vpninfo->current_ssl_pkt = this;
 		}
 
@@ -1652,7 +1671,7 @@ int ppp_udp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readabl
 			 * may be in active use while we attempt to connect DTLS.
 			 * So use vpninfo->dtls_pkt for this. */
 			if (!vpninfo->dtls_pkt)
-				vpninfo->dtls_pkt = malloc(sizeof(struct pkt) + receive_mtu);
+				vpninfo->dtls_pkt = alloc_pkt(vpninfo, receive_mtu);
 			if (!vpninfo->dtls_pkt) {
 				vpn_progress(vpninfo, PRG_ERR, _("Allocation failed\n"));
 				dtls_close(vpninfo);
@@ -1683,7 +1702,7 @@ int ppp_udp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readabl
 			} else if (ret > 0) {
 				vpninfo->dtls_state = DTLS_ESTABLISHED;
 				vpninfo->dtls_pkt = NULL;
-				free(this);
+				free_pkt(vpninfo, this);
 
 				/* We are going to take over the PPP now; reset the TCP one */
 				ret = ppp_reset(vpninfo);

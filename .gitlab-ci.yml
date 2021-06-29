@@ -7,6 +7,8 @@ variables:
   MINGW32_BUILD: openconnect-cli-mingw32
   MINGW64_BUILD: openconnect-cli-mingw64
   UBUNTU_BUILD: openconnect-cli-ubuntu
+  ANDROID_BUILD: openconnect-cli-android
+  ANDROID_TOOLCHAINDIR: /opt/android-sdk-linux_x86/toolchains
 
 image: $CI_REGISTRY/$BUILD_IMAGES_PROJECT:$FEDORA_BUILD
 
@@ -126,7 +128,7 @@ CentOS6/OpenSSL:
 Signoff:
   script:
   # Quoted to work around https://gitlab.com/gitlab-org/gitlab-foss/-/issues/20177
-  - 'echo "Checking for new commits without Signed-off-by: tags as described in http://www.infradead.org/openconnect/contribute.html"'
+  - 'echo "Checking for new commits without Signed-off-by: tags as described in https://www.infradead.org/openconnect/contribute.html"'
   # Last bad commit
   - 'git log ceab1765db11c15a18a0c605812dbc11afd63e8b.. --grep "(^Signed-off-by)|(^Merge branch)|(^This reverts commit)" --extended-regexp --invert-grep --exit-code'
   - echo "None (good)"
@@ -169,7 +171,10 @@ ubsan/GnuTLS/Fedora:
   - export UBCFLAGS="-Wall -Wextra -fsanitize=undefined -fsanitize=bool -fsanitize=alignment -fsanitize=null -fsanitize=bounds-strict -fsanitize=enum -fno-sanitize-recover -g -O2"
   - CFLAGS="$UBCFLAGS" ./configure --with-java --disable-dsa-tests --without-gnutls-version-check
   - make -j4
-  - make VERBOSE=1 -j4 check
+# obsolete-server-crypto: system-wide crypto policy prevents --allow-insecure-crypto from working, and the
+#   library-reinitialization hack does not reliably work (https://gitlab.com/openconnect/openconnect/-/issues/243#note_576194663)
+#   XFAIL until we get a solution for https://bugzilla.redhat.com/show_bug.cgi?id=1960763
+  - make VERBOSE=1 XFAIL_TESTS="obsolete-server-crypto" -j4 check
   tags:
   - shared
   - linux
@@ -207,6 +212,8 @@ ubsan/OpenSSL/Fedora:
 
 asan/GnuTLS/Fedora:
   image: $CI_REGISTRY/$BUILD_IMAGES_PROJECT:$FEDORA_BUILD
+  only:
+  - asan
   script:
   - ./autogen.sh
   - CC=clang CFLAGS="-fsanitize=address -fno-optimize-sibling-calls -fno-omit-frame-pointer -g -O1"
@@ -228,6 +235,8 @@ asan/GnuTLS/Fedora:
 
 asan/OpenSSL/Fedora:
   image: $CI_REGISTRY/$BUILD_IMAGES_PROJECT:$FEDORA_BUILD
+  only:
+  - asan
   script:
   - ./autogen.sh
   - CC=clang CFLAGS="-fsanitize=address -fno-optimize-sibling-calls -fno-omit-frame-pointer -g -O1"
@@ -262,7 +271,10 @@ Fedora/GnuTLS:
 # we don't want pppd to invoke any actual connection scripts
   - mv /etc/ppp /etc/ppp.DISABLED
 # auth-pkcs11: Disable rdrand to work around https://bugzilla.redhat.com/1831086
-  - make VERBOSE=1 OPENSSL_ia32cap=~0x4000000000000000 -j4 check
+# obsolete-server-crypto: system-wide crypto policy prevents --allow-insecure-crypto from working, and the
+#   library-reinitialization hack does not reliably work (https://gitlab.com/openconnect/openconnect/-/issues/243#note_576194663)
+#   XFAIL until we get a solution for https://bugzilla.redhat.com/show_bug.cgi?id=1960763
+  - make VERBOSE=1 OPENSSL_ia32cap=~0x4000000000000000 XFAIL_TESTS="obsolete-server-crypto" -j4 check
   tags:
   - shared
   except:
@@ -288,7 +300,10 @@ Fedora/GnuTLS/ibmtss:
 # we don't want pppd to invoke any actual connection scripts
   - mv /etc/ppp /etc/ppp.DISABLED
 # auth-pkcs11: Disable rdrand to work around https://bugzilla.redhat.com/1831086
-  - make VERBOSE=1 OPENSSL_ia32cap=~0x4000000000000000 -j4 check
+# obsolete-server-crypto: system-wide crypto policy prevents --allow-insecure-crypto from working, and the
+#   library-reinitialization hack does not reliably work (https://gitlab.com/openconnect/openconnect/-/issues/243#note_576194663)
+#   XFAIL until we get a solution for https://bugzilla.redhat.com/show_bug.cgi?id=1960763
+  - make VERBOSE=1 OPENSSL_ia32cap=~0x4000000000000000 XFAIL_TESTS="obsolete-server-crypto" -j4 check
   tags:
   - shared
   except:
@@ -313,7 +328,10 @@ Fedora/GnuTLS/clang:
 # we don't want pppd to invoke any actual connection scripts
   - mv /etc/ppp /etc/ppp.DISABLED
 # auth-pkcs11: Disable rdrand to work around https://bugzilla.redhat.com/1831086
-  - make VERBOSE=1 OPENSSL_ia32cap=~0x4000000000000000 -j4 check
+# obsolete-server-crypto: system-wide crypto policy prevents --allow-insecure-crypto from working, and the
+#   library-reinitialization hack does not reliably work (https://gitlab.com/openconnect/openconnect/-/issues/243#note_576194663)
+#   XFAIL until we get a solution for https://bugzilla.redhat.com/show_bug.cgi?id=1960763
+  - make VERBOSE=1 OPENSSL_ia32cap=~0x4000000000000000 XFAIL_TESTS="obsolete-server-crypto" -j4 check
   tags:
   - shared
   except:
@@ -524,8 +542,56 @@ MinGW64/OpenSSL:
       - tests/*.log
       - openconnect-installer.exe
 
+Android/x86_64:
+  image: $CI_REGISTRY/$BUILD_IMAGES_PROJECT:$ANDROID_BUILD
+  script:
+  tags:
+  - shared
+  script:
+  - make -C android ARCH=x86_64 TOOLCHAIN=$ANDROID_TOOLCHAINDIR/'$(TRIPLET)-$(API_LEVEL)'
+  artifacts:
+    when: always
+    paths:
+      - android/*-linux-android*/out/*
+
+Android/x86:
+  image: $CI_REGISTRY/$BUILD_IMAGES_PROJECT:$ANDROID_BUILD
+  script:
+  tags:
+  - shared
+  script:
+  - make -C android ARCH=x86 TOOLCHAIN=$ANDROID_TOOLCHAINDIR/'$(TRIPLET)-$(API_LEVEL)'
+  artifacts:
+    when: always
+    paths:
+      - android/*-linux-android*/out/*
+
+Android/arm:
+  image: $CI_REGISTRY/$BUILD_IMAGES_PROJECT:$ANDROID_BUILD
+  script:
+  tags:
+  - shared
+  script:
+  - make -C android ARCH=arm TOOLCHAIN=$ANDROID_TOOLCHAINDIR/'$(TRIPLET)-$(API_LEVEL)'
+  artifacts:
+    when: always
+    paths:
+      - android/*-linux-android*/out/*
+
+Android/arm64:
+  image: $CI_REGISTRY/$BUILD_IMAGES_PROJECT:$ANDROID_BUILD
+  script:
+  tags:
+  - shared
+  script:
+  - make -C android ARCH=arm64 TOOLCHAIN=$ANDROID_TOOLCHAINDIR/'$(TRIPLET)-$(API_LEVEL)'
+  artifacts:
+    when: always
+    paths:
+      - android/*-linux-android*/out/*
+
 static-analyzer/GnuTLS/Fedora:
-  image: $CI_REGISTRY/$BUILD_IMAGES_PROJECT:buildenv-fedora
+  image: $CI_REGISTRY/$BUILD_IMAGES_PROJECT:buildenv-fedora33
   script:
   - ./autogen.sh
   - scan-build ./configure
@@ -543,7 +609,7 @@ static-analyzer/GnuTLS/Fedora:
       - scan-build-src/*
 
 static-analyzer/OpenSSL/Fedora:
-  image: $CI_REGISTRY/$BUILD_IMAGES_PROJECT:buildenv-fedora
+  image: $CI_REGISTRY/$BUILD_IMAGES_PROJECT:buildenv-fedora33
   script:
   - ./autogen.sh
   - scan-build ./configure --without-gnutls --with-openssl --without-openssl-version-check

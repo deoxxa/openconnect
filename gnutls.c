@@ -50,7 +50,7 @@ static int gnutls_pin_callback(void *priv, int attempt, const char *uri,
 
 /* GnuTLS 2.x lacked this. But GNUTLS_E_UNEXPECTED_PACKET_LENGTH basically
  * does the same thing.
- * http://lists.infradead.org/pipermail/openconnect-devel/2014-March/001726.html
+ * https://lists.infradead.org/pipermail/openconnect-devel/2014-March/001726.html
  */
 #ifndef GNUTLS_E_PREMATURE_TERMINATION
 #define GNUTLS_E_PREMATURE_TERMINATION GNUTLS_E_UNEXPECTED_PACKET_LENGTH
@@ -67,7 +67,7 @@ static int gnutls_pin_callback(void *priv, int attempt, const char *uri,
 
 static char tls_library_version[32] = "";
 
-const char *openconnect_get_tls_library_version()
+const char *openconnect_get_tls_library_version(void)
 {
 	if (!*tls_library_version) {
 		snprintf(tls_library_version, sizeof(tls_library_version), "GnuTLS %s",
@@ -76,25 +76,14 @@ const char *openconnect_get_tls_library_version()
 	return tls_library_version;
 }
 
-int can_enable_insecure_crypto()
+int can_enable_insecure_crypto(void)
 {
-	int ret = 0;
-
-	if (setenv("GNUTLS_SYSTEM_PRIORITY_FILE", DEVNULL, 1) < 0)
-		return -errno;
-
-	gnutls_global_deinit();
-	ret = openconnect_init_ssl();
-	if (ret)
-		return ret;
-
 	/* XX: As of GnuTLS 3.6.13, no released version has (yet) removed 3DES/RC4 from default builds,
 	 * but like OpenSSL (removed in 1.1.0) it may happen. */
 	if (gnutls_cipher_get_id("3DES-CBC") == GNUTLS_CIPHER_UNKNOWN ||
 	    gnutls_cipher_get_id("ARCFOUR-128") == GNUTLS_CIPHER_UNKNOWN)
-		ret = -ENOENT;
-
-	return ret;
+		return -ENOENT;
+	return 0;
 }
 
 /* Helper functions for reading/writing lines over TLS/DTLS. */
@@ -392,7 +381,7 @@ static int check_certificate_expiry(struct openconnect_info *vpninfo, struct cer
 		/*
 		 * Windows doesn't have gmtime_r but apparently its gmtime()
 		 * *is* thread-safe because it uses a per-thread static buffer.
-		 * cf. http://sourceforge.net/p/mingw/bugs/1625/
+		 * cf. https://sourceforge.net/p/mingw/bugs/1625/
 		 *
 		 * We also explicitly say 'GMT' because %Z would give us the
 		 * Microsoft stupidity "GMT Standard Time". Which is not only
@@ -2321,7 +2310,7 @@ int openconnect_open_https(struct openconnect_info *vpninfo)
 	* is specified.
 	*
 	* Discussion:
-	* http://www.ietf.org/mail-archive/web/tls/current/msg10423.html
+	* https://www.ietf.org/mail-archive/web/tls/current/msg10423.html
 	*
 	* GnuTLS commits:
 	* b6d29bb1737f96ac44a8ef9cc9fe7f9837e20465

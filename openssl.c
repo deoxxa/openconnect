@@ -52,7 +52,7 @@ typedef int (*X509_STORE_CTX_get_issuer_fn)(X509 **issuer,
 
 static char tls_library_version[32] = "";
 
-const char *openconnect_get_tls_library_version()
+const char *openconnect_get_tls_library_version(void)
 {
 	if (!*tls_library_version) {
 		strncpy(tls_library_version, SSLeay_version(SSLEAY_VERSION), sizeof(tls_library_version));
@@ -61,25 +61,12 @@ const char *openconnect_get_tls_library_version()
 	return tls_library_version;
 }
 
-int can_enable_insecure_crypto()
+int can_enable_insecure_crypto(void)
 {
-	int ret = 0;
-
-	if (setenv("OPENSSL_CONF", DEVNULL, 1) < 0)
-		return -errno;
-
-	/* FIXME: deinitialize and reinitialize library, as is done for GnuTLS,
-	 * to ensure that updated value is used.
-	 *
-	 * Cleaning up and reinitalizing OpenSSL appears to be complex:
-	 *   https://wiki.openssl.org/index.php/Library_Initialization#Cleanup
-	 */
-
 	if (EVP_des_ede3_cbc() == NULL ||
 	    EVP_rc4() == NULL)
-		ret = -ENOENT;
-
-	return ret;
+		return -ENOENT;
+	return 0;
 }
 
 int openconnect_sha1(unsigned char *result, void *data, int len)
@@ -1933,7 +1920,7 @@ int openconnect_open_https(struct openconnect_info *vpninfo)
 	 * packets by silently disabling extensions such as SNI.
 	 *
 	 * Discussion:
-	 * http://www.ietf.org/mail-archive/web/tls/current/msg10423.html
+	 * https://www.ietf.org/mail-archive/web/tls/current/msg10423.html
 	 *
 	 * OpenSSL commits:
 	 * 4fcdd66fff5fea0cfa1055c6680a76a4303f28a2

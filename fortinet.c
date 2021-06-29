@@ -108,7 +108,7 @@ int fortinet_obtain_cookie(struct openconnect_info *vpninfo)
 		goto out;
 	}
 
-	ret = do_https_request(vpninfo, "GET", NULL, NULL, &resp_buf, 1);
+	ret = do_https_request(vpninfo, "GET", NULL, NULL, &resp_buf, NULL, 1);
 	free(resp_buf);
 	resp_buf = NULL;
 	if (ret < 0)
@@ -124,7 +124,7 @@ int fortinet_obtain_cookie(struct openconnect_info *vpninfo)
 		for (realm = strchr(vpninfo->urlpath, '?'); realm && *++realm; realm=strchr(realm, '&')) {
 			if (!strncmp(realm, "realm=", 6)) {
 				const char *end = strchrnul(realm+1, '&');
-				realm = strndup(realm+6, end-realm);
+				realm = strndup(realm+6, end-realm-6);
 				vpn_progress(vpninfo, PRG_INFO, _("Got login realm '%s'\n"), realm);
 				break;
 			}
@@ -195,7 +195,7 @@ int fortinet_obtain_cookie(struct openconnect_info *vpninfo)
 		if ((ret = buf_error(req_buf)))
 		        goto out;
 		ret = do_https_request(vpninfo, "POST", "application/x-www-form-urlencoded",
-				       req_buf, &resp_buf, 0);
+				       req_buf, &resp_buf, NULL, 0);
 
 		/* If we got SVPNCOOKIE, then we're done. */
 		struct oc_vpn_option *cookie;
@@ -343,14 +343,14 @@ static int parse_fortinet_xml_config(struct openconnect_info *vpninfo, char *buf
 		} else if (xmlnode_is_named(xml_node, "fos")) {
 			char platform[80], *p = platform, *e = platform + 80;
 			if (!xmlnode_get_prop(xml_node, "platform", &s)) {
-			    p+=snprintf(p, e-p, "%s", s);
-			    if (!xmlnode_get_prop(xml_node, "major", &s))  p+=snprintf(p, e-p, " v%s", s);
-			    if (!xmlnode_get_prop(xml_node, "minor", &s))  p+=snprintf(p, e-p, ".%s", s);
-			    if (!xmlnode_get_prop(xml_node, "patch", &s))  p+=snprintf(p, e-p, ".%s", s);
-			    if (!xmlnode_get_prop(xml_node, "build", &s))  p+=snprintf(p, e-p, " build %s", s);
-			    if (!xmlnode_get_prop(xml_node, "branch", &s))    snprintf(p, e-p, " branch %s", s);
-			    vpn_progress(vpninfo, PRG_INFO,
-					 _("Reported platform is %s\n"), platform);
+				p+=snprintf(p, e-p, "%s", s);
+				if (!xmlnode_get_prop(xml_node, "major", &s))  p+=snprintf(p, e-p, " v%s", s);
+				if (!xmlnode_get_prop(xml_node, "minor", &s))  p+=snprintf(p, e-p, ".%s", s);
+				if (!xmlnode_get_prop(xml_node, "patch", &s))  p+=snprintf(p, e-p, ".%s", s);
+				if (!xmlnode_get_prop(xml_node, "build", &s))  p+=snprintf(p, e-p, " build %s", s);
+				if (!xmlnode_get_prop(xml_node, "branch", &s))    snprintf(p, e-p, " branch %s", s);
+				vpn_progress(vpninfo, PRG_INFO,
+					     _("Reported platform is %s\n"), platform);
 			}
 		} else if (xmlnode_is_named(xml_node, "ipv4")) {
 			for (x = xml_node->children; x; x=x->next) {
@@ -417,10 +417,13 @@ static int parse_fortinet_xml_config(struct openconnect_info *vpninfo, char *buf
 							goto out;
 						}
 						vpn_progress(vpninfo, PRG_INFO, _("Got IPv6 address %s\n"), a);
-						new_ip_info.netmask6 = add_option_steal(&new_opts, "ipaddr6", &a);
+						if (!vpninfo->disable_ipv6)
+							new_ip_info.netmask6 = add_option_steal(&new_opts, "ipaddr6", &a);
+						free(a);
 					} else {
 						vpn_progress(vpninfo, PRG_INFO, _("Got IPv6 address %s\n"), s);
-						new_ip_info.addr6 = add_option_steal(&new_opts, "ipaddr6", &s);
+						if (!vpninfo->disable_ipv6)
+							new_ip_info.addr6 = add_option_steal(&new_opts, "ipaddr6", &s);
 					}
 				} else if (xmlnode_is_named(x, "dns")) {
 					if (!xmlnode_get_prop(x, "domain", &s) && s && *s) {
@@ -537,14 +540,19 @@ static int fortinet_configure(struct openconnect_info *vpninfo)
 		goto out;
 	}
 
-	/* XXX: Why do Forticlient and Openfortivpn do this anyway?
-	 * It's fetching the legacy non-XML configuration, isn't it?
-	 * Do we *actually* have to do this, before fetching the XML config?
+	/* XXX: Forticlient and Openfortivpn fetch the legacy HTTP configuration.
+	 * FortiOS 4 was the last version to send the legacy HTTP configuration.
+	 * FortiOS 5 and later send the current XML configuration.
+	 * We clearly do not need to support FortiOS 4 anymore.
+	 *
+	 * Yet we keep this code around in order to get a sanity check about
+	 * whether the SVPNCOOKIE is still valid/alive, until we are sure we've
+	 * worked out the weirdness with reconnects.
 	 */
 #if 0 /* Nah... */
 	free(vpninfo->urlpath);
 	vpninfo->urlpath = strdup("remote/fortisslvpn");
-	ret = do_https_request(vpninfo, "GET", NULL, NULL, &res_buf, 0);
+	ret = do_https_request(vpninfo, "GET", NULL, NULL, &res_buf, NULL, 0);
 	if (ret < 0)
 		goto out;
 	else if (ret == 0)
@@ -557,7 +565,7 @@ static int fortinet_configure(struct openconnect_info *vpninfo)
 
 	/* Now fetch the connection options in XML format */
 	vpninfo->urlpath = strdup("remote/fortisslvpn_xml");
-	ret = do_https_request(vpninfo, "GET", NULL, NULL, &res_buf, 0);
+	ret = do_https_request(vpninfo, "GET", NULL, NULL, &res_buf, NULL, 0);
 	if (ret < 0) {
 		if (ret == -EPERM)
 			vpn_progress(vpninfo, PRG_ERR,
@@ -660,6 +668,7 @@ int fortinet_connect(struct openconnect_info *vpninfo)
 	 *
 	 * Don't blame me. I didn't design this.
 	 */
+	vpninfo->ppp->check_http_response = 1;
 
 	/* Trigger the first PPP negotiations and ensure the PPP state
 	 * is PPPS_ESTABLISH so that ppp_tcp_mainloop() knows we've started. */
@@ -734,7 +743,7 @@ int fortinet_bye(struct openconnect_info *vpninfo, const char *reason)
 
 	orig_path = vpninfo->urlpath;
 	vpninfo->urlpath = strdup("remote/logout");
-	ret = do_https_request(vpninfo, "GET", NULL, NULL, &res_buf, 0);
+	ret = do_https_request(vpninfo, "GET", NULL, NULL, &res_buf, NULL, 0);
 	free(vpninfo->urlpath);
 	vpninfo->urlpath = orig_path;
 

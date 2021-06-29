@@ -69,6 +69,7 @@ struct openconnect_info *openconnect_vpninfo_new(const char *useragent,
 #ifndef _WIN32
 	vpninfo->tun_fd = -1;
 #endif
+	init_pkt_queue(&vpninfo->free_queue);
 	init_pkt_queue(&vpninfo->incoming_queue);
 	init_pkt_queue(&vpninfo->outgoing_queue);
 	init_pkt_queue(&vpninfo->tcp_control_queue);
@@ -698,10 +699,14 @@ void openconnect_vpninfo_free(struct openconnect_info *vpninfo)
 	inflateEnd(&vpninfo->inflate_strm);
 	deflateEnd(&vpninfo->deflate_strm);
 
-	free(vpninfo->deflate_pkt);
-	free(vpninfo->tun_pkt);
-	free(vpninfo->dtls_pkt);
-	free(vpninfo->cstp_pkt);
+	free_pkt(vpninfo, vpninfo->deflate_pkt);
+	free_pkt(vpninfo, vpninfo->tun_pkt);
+	free_pkt(vpninfo, vpninfo->dtls_pkt);
+	free_pkt(vpninfo, vpninfo->cstp_pkt);
+	struct pkt *pkt;
+	while ((pkt = dequeue_packet(&vpninfo->free_queue)))
+		free(pkt);
+
 	free(vpninfo->bearer_token);
 	free(vpninfo);
 }
@@ -1021,8 +1026,10 @@ void openconnect_set_pfs(struct openconnect_info *vpninfo, unsigned val)
 int openconnect_set_allow_insecure_crypto(struct openconnect_info *vpninfo, unsigned val)
 {
 	int ret = can_enable_insecure_crypto();
+	if (ret)
+		return ret;
 	vpninfo->allow_insecure_crypto = val;
-	return ret;
+	return 0;
 }
 
 void openconnect_set_cancel_fd(struct openconnect_info *vpninfo, int fd)
@@ -1055,6 +1062,7 @@ OPENCONNECT_CMD_SOCKET openconnect_setup_cmd_pipe(struct openconnect_info *vpnin
 	}
 	vpninfo->cmd_fd = pipefd[0];
 	vpninfo->cmd_fd_write = pipefd[1];
+	vpninfo->need_poll_cmd_fd = 1;
 	return vpninfo->cmd_fd_write;
 }
 

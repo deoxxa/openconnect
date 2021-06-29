@@ -89,7 +89,7 @@ static int parse_auth_choice(struct openconnect_info *vpninfo, struct oc_auth_fo
 
 	/* Return early when there is a <select/> tag with no children */
 	if (max_choices == 0) {
-	    return 0;
+		return 0;
 	}
 
 	opt = calloc(1, sizeof(*opt));
@@ -681,8 +681,18 @@ static int handle_auth_form(struct openconnect_info *vpninfo, struct oc_auth_for
 	if (!form->opts) {
 		if (form->message)
 			vpn_progress(vpninfo, PRG_INFO, "%s\n", form->message);
-		if (form->error)
-			vpn_progress(vpninfo, PRG_ERR, "%s\n", form->error);
+		if (form->error) {
+			if (!strcmp(form->error, "Certificate Validation Failure")) {
+				/* XX: Cisco servers send this ambiguous error string when the CLIENT certificate
+				 * is absent or incorrect. We rewrite it to make this clearer, while preserving
+				 * the original error as a substring.
+				 */
+				free(form->error);
+				if (!(form->error = strdup(_("Client certificate missing or incorrect (Certificate Validation Failure)"))))
+					return -ENOMEM;
+			} else
+				vpn_progress(vpninfo, PRG_ERR, "%s\n", form->error);
+		}
 		if (!strcmp(form->auth_id, "openconnect_authentication_complete"))
 			goto justpost;
 		return -EPERM;
@@ -925,8 +935,8 @@ static int cstp_can_gen_tokencode(struct openconnect_info *vpninfo,
 #endif
 	/* Otherwise it's an OATH token of some kind. */
 	if (!strcmp(opt->name, "secondary_password") ||
-        (form->auth_id && !strcmp(form->auth_id, "challenge")))
-	  return can_gen_tokencode(vpninfo, form, opt);
+	    (form->auth_id && !strcmp(form->auth_id, "challenge")))
+		return can_gen_tokencode(vpninfo, form, opt);
 
 	return -EINVAL;
 }
@@ -1352,8 +1362,7 @@ newgroup:
 		}
 
 		request_body_type = vpninfo->xmlpost ? "application/xml; charset=utf-8" : "application/x-www-form-urlencoded";
-		result = do_https_request(vpninfo, method, request_body_type, request_body,
-					  &form_buf, 0);
+		result = do_https_request(vpninfo, method, request_body_type, request_body, &form_buf, NULL, 0);
 		if (vpninfo->got_cancel_cmd) {
 			result = 1;
 			goto out;
@@ -1432,7 +1441,7 @@ newgroup:
 			vpninfo->csd_stuburl = NULL;
 			handle_redirect(vpninfo);
 
-			buflen = do_https_request(vpninfo, "GET", NULL, NULL, &form_buf, 0);
+			buflen = do_https_request(vpninfo, "GET", NULL, NULL, &form_buf, NULL, 0);
 			if (buflen <= 0) {
 				if (vpninfo->csd_wrapper) {
 					vpn_progress(vpninfo, PRG_ERR,
@@ -1455,7 +1464,7 @@ newgroup:
 
 		/* vpninfo->urlpath now points to the wait page */
 		while (1) {
-			result = do_https_request(vpninfo, "GET", NULL, NULL, &form_buf, 0);
+			result = do_https_request(vpninfo, "GET", NULL, NULL, &form_buf, NULL, 0);
 			if (result <= 0)
 				break;
 
@@ -1478,7 +1487,7 @@ newgroup:
 
 		result = do_https_request(vpninfo,
 					  vpninfo->xmlpost ? "POST" : "GET",
-					  request_body_type, request_body, &form_buf, 1);
+					  request_body_type, request_body, &form_buf, NULL, 1);
 		if (result < 0)
 			goto out;
 
@@ -1504,8 +1513,7 @@ newgroup:
 			goto newgroup;
 		}
 
-		result = do_https_request(vpninfo, method, request_body_type, request_body,
-					  &form_buf, 1);
+		result = do_https_request(vpninfo, method, request_body_type, request_body, &form_buf, NULL, 1);
 		if (result < 0)
 			goto out;
 

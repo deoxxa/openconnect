@@ -30,9 +30,10 @@
 
 #include "openconnect-internal.h"
 
-int queue_new_packet(struct pkt_q *q, void *buf, int len)
+int queue_new_packet(struct openconnect_info *vpninfo,
+		     struct pkt_q *q, void *buf, int len)
 {
-	struct pkt *new = malloc(sizeof(struct pkt) + len);
+	struct pkt *new = alloc_pkt(vpninfo, len);
 	if (!new)
 		return -ENOMEM;
 
@@ -53,7 +54,7 @@ int tun_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 	if (!tun_is_up(vpninfo)) {
 		/* no tun yet; clear any queued packets */
 		while ((this = dequeue_packet(&vpninfo->incoming_queue)))
-			free(this);
+			free_pkt(vpninfo, this);
 
 		return 0;
 	}
@@ -64,7 +65,7 @@ int tun_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 			int len = vpninfo->ip_info.mtu;
 
 			if (!out_pkt) {
-				out_pkt = malloc(sizeof(struct pkt) + len + vpninfo->pkt_trailer);
+				out_pkt = alloc_pkt(vpninfo, len + vpninfo->pkt_trailer);
 				if (!out_pkt) {
 					vpn_progress(vpninfo, PRG_ERR, _("Allocation failed\n"));
 					break;
@@ -104,7 +105,7 @@ int tun_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 		vpninfo->stats.rx_pkts++;
 		vpninfo->stats.rx_bytes += this->len;
 
-		free(this);
+		free_pkt(vpninfo, this);
 	}
 	/* Work is not done if we just got rid of packets off the queue */
 	return work_done;
@@ -238,7 +239,9 @@ int openconnect_mainloop(struct openconnect_info *vpninfo,
 		if (vpninfo->quit_reason)
 			break;
 
-		poll_cmd_fd(vpninfo, 0);
+		if (vpninfo->need_poll_cmd_fd)
+			poll_cmd_fd(vpninfo, 0);
+
 		if (vpninfo->got_cancel_cmd) {
 			if (vpninfo->delay_close != NO_DELAY_CLOSE) {
 				if (vpninfo->delay_close == DELAY_CLOSE_IMMEDIATE_CALLBACK) {
