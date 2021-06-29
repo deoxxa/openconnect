@@ -165,7 +165,7 @@ static char *hide_auth_data(const char *data)
 }
 #endif
 
-static int snx_send_command(struct openconnect_info *vpninfo, const char*cmd)
+static int snx_queue_command(struct openconnect_info *vpninfo, const char*cmd)
 {
 	int len = strlen(cmd) + 1;
 	struct pkt *pkt = build_packet(vpninfo, CMD, cmd, len);
@@ -699,7 +699,7 @@ static int send_client_hello_command(struct openconnect_info *vpninfo)
 	if (ret <= 0)
 		return -ENOMEM;
 
-	ret = snx_send_command(vpninfo, request_body);
+	ret = snx_queue_command(vpninfo, request_body);
 	free(request_body);
 	return ret;
 }
@@ -973,7 +973,9 @@ static int handle_hello_reply(const char *data, struct openconnect_info *vpninfo
 		} else {
 			vpninfo->ssl_times.last_rekey = time(NULL);
 			vpninfo->delay_tunnel_reason = NULL;
-        }
+			/* Need to send disconnect packet after close */
+			vpninfo->delay_close = DELAY_CLOSE_IMMEDIATE_CALLBACK;
+		}
 	}
 
 	cpo_free(cpo);
@@ -1097,6 +1099,10 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 
 	if (vpninfo->ssl_times.last_rekey == 0)
 		vpninfo->delay_tunnel_reason = awaiting_hello_reply;
+	else if (vpninfo->got_cancel_cmd)
+		/* XX: we already set vpninfo->delay_close upon connection */
+		snx_queue_command(vpninfo, disconnect);
+
 
 	/* Service one incoming packet. */
 	if (readable) {
@@ -1220,11 +1226,6 @@ int cp_bye(struct openconnect_info *vpninfo, const char *reason)
 	struct oc_text_buf *request_body = buf_alloc();
 	char *data = NULL;
 	char *colon = strchr(vpninfo->cookie, ':'); /* slim_cookie:session_id */
-
-	if (vpninfo->ssl_fd != -1) {
-		snx_send_command(vpninfo, disconnect);
-		openconnect_close_https(vpninfo, 0);
-	}
 
 	if (colon) {
 		orig_path = vpninfo->urlpath;
