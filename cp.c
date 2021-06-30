@@ -1043,7 +1043,7 @@ static int snx_handle_command(struct openconnect_info *vpninfo)
 		return -EPIPE;
 	} else if (!strncmp(data, "(hello_reply", 12)) {
 		if (!vpninfo->ssl_times.last_rekey)
-			vpn_progress(vpninfo, PRG_ERR, _("WARNING: Repeated 'hello_reply' received. OpenConnect will fail if IP address(es) have changed.\n"));
+			vpn_progress(vpninfo, PRG_ERR, _("WARNING: Repeated 'hello_reply' received. OpenConnect will fail if IP address(es) have changed.\nTo use updated routing, DNS or WINS options login again, please.\n"));
 		ret = handle_hello_reply(data, vpninfo);
 	} else if (!strncmp(data, "(hello_again", 12))
 		vpn_progress(vpninfo, PRG_DEBUG, _("'hello_again' received, ignoring.\n"));
