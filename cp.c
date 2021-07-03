@@ -216,6 +216,9 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type) {
 	*pkt_type = load_be32(pkt->cpsnx.hdr + 4);
 	int payload_len = pkt->len - vpninfo->partial_rec_size;
 	buf = pkt->data + vpninfo->partial_rec_size;
+	/* Prevent (unlikely) buffer overflow */
+	if (payload_len > pkt->alloc_len - sizeof (*pkt))
+		return -E2BIG;
 
 	ret = ssl_nonblock_read(vpninfo, 0, buf, payload_len);
 
