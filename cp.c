@@ -1103,7 +1103,7 @@ int cp_mainloop(struct openconnect_info *vpninfo, int *timeout, int readable)
 
 	if (vpninfo->ssl_times.last_rekey == 0)
 		vpninfo->delay_tunnel_reason = awaiting_hello_reply;
-	else if (vpninfo->got_cancel_cmd)
+	else if (vpninfo->got_cancel_cmd && vpninfo->cancel_type == OC_CMD_CANCEL)
 		/* XX: we already set vpninfo->delay_close upon connection */
 		snx_queue_command(vpninfo, disconnect);
 
