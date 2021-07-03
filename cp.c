@@ -184,6 +184,7 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type) {
 		pkt = vpninfo->cstp_pkt = alloc_pkt(vpninfo, receive_mtu);
 		if (!pkt)
 			return -ENOMEM;
+		pkt->len = 0;
 	}
 
 	/* FIXME: check that packet size does not exceed receive_mtu */
