@@ -1236,6 +1236,7 @@ int cp_bye(struct openconnect_info *vpninfo, const char *reason)
 		vpninfo->urlpath = strdup(clients_str);
 		buf_append(request_body, CCCclientRequestSignout, colon + 1);
 		if (vpninfo->urlpath && !buf_error(request_body)) {
+			openconnect_close_https(vpninfo, 0);
 			result = https_request_wrapper(vpninfo, request_body, &data, 0);
 			free(vpninfo->urlpath);
 			vpninfo->urlpath = orig_path;
