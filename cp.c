@@ -198,6 +198,7 @@ static int snx_receive(struct openconnect_info *vpninfo, int*pkt_type) {
 		if (ret < 0) {
 			/* Exit immediately on error. */
 			free_pkt(vpninfo, vpninfo->cstp_pkt);
+			vpninfo->cstp_pkt = NULL;
 			return ret;
 		}
 
