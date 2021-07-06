@@ -1020,11 +1020,9 @@ static int snx_start_tunnel(struct openconnect_info *vpninfo)
 static int do_reconnect(struct openconnect_info *vpninfo)
 {
 	int result = ssl_reconnect(vpninfo);
-	if (result) {
+	if (result)
 		vpninfo->quit_reason = "Server reconnect failed";
-		return result;
-	}
-	return snx_start_tunnel(vpninfo);
+	return result;
 }
 
 static int snx_handle_command(struct openconnect_info *vpninfo)
