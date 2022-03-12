@@ -384,6 +384,9 @@ int openconnect_mainloop(struct openconnect_info *vpninfo,
 						vhost_r = 1;
 #endif
 				}
+				if (evs[nfds].events & EPOLLERR) {
+					vpn_progress(vpninfo, PRG_INFO, "EPOLLERR on fd %d\n", evs[nfds].data.fd);
+				}
 			}
 			continue;
 		}

@@ -940,6 +940,7 @@ static inline void __sync_epoll_fd(struct openconnect_info *vpninfo, int fd, uin
 static inline void __remove_epoll_fd(struct openconnect_info *vpninfo, int fd)
 {
 	struct epoll_event ev = { 0 };
+	vpn_progress(vpninfo, PRG_INFO, "Remove epoll fd %d\n", fd);
 	if (vpninfo->epoll_fd >= 0 &&
 	    epoll_ctl(vpninfo->epoll_fd, EPOLL_CTL_DEL, fd, &ev) < 0 &&
 	    errno != ENOENT)
@@ -991,7 +992,7 @@ static inline void __unmonitor_fd_event(struct openconnect_info *vpninfo,
 #define unmonitor_except_fd(_v, _n) __unmonitor_fd_event(_v, _v->_n##_fd, &_v->_select_efds)
 
 static inline void __monitor_fd_new(struct openconnect_info *vpninfo,
-				    int fd)
+				    int fd, const char *name)
 {
 	if (vpninfo->_select_nfds <= fd)
 		vpninfo->_select_nfds = fd + 1;
@@ -999,6 +1000,7 @@ static inline void __monitor_fd_new(struct openconnect_info *vpninfo,
 	if (vpninfo->epoll_fd >= 0) {
 		struct epoll_event ev = { 0 };
 		ev.data.fd = fd;
+		vpn_progress(vpninfo, PRG_INFO, "Monitor %s fd %d\n", name, fd);
 		if (epoll_ctl(vpninfo->epoll_fd, EPOLL_CTL_ADD, fd, &ev)) {
 			vpn_perror(vpninfo, "EPOLL_CTL_ADD");
 			close(vpninfo->epoll_fd);
@@ -1008,7 +1010,7 @@ static inline void __monitor_fd_new(struct openconnect_info *vpninfo,
 #endif
 }
 
-#define monitor_fd_new(_v, _n) __monitor_fd_new(_v, _v->_n##_fd)
+#define monitor_fd_new(_v, _n) __monitor_fd_new(_v, _v->_n##_fd, #_n)
 #define read_fd_monitored(_v, _n) FD_ISSET(_v->_n##_fd, &_v->_select_rfds)
 #endif /* !WIN32 */
 
