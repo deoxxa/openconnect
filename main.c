@@ -1917,6 +1917,8 @@ int main(int argc, char **argv)
 			break;
 		case OPT_AUTHGROUP:
 			authgroup = keep_config_arg();
+			free(vpninfo->authgroup);
+			vpninfo->authgroup = strdup(authgroup);
 			break;
 		case 'C':
 			vpninfo->cookie = dup_config_arg();
