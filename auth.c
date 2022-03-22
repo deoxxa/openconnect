@@ -809,6 +809,10 @@ static xmlDocPtr xmlpost_new_query(struct openconnect_info *vpninfo, const char 
 	if (!node)
 		goto bad;
 
+	node = xmlNewTextChild(capabilities, NULL, XCAST("auth-method"), XCAST("single-sign-on-external-browser"));
+	if (!node)
+		goto bad;
+
 	*rootp = root;
 	return doc;
 
