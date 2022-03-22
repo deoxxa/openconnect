@@ -72,6 +72,7 @@ static void __attribute__ ((format(printf, 3, 4)))
 static int validate_peer_cert(void *_vpninfo, const char *reason);
 static int process_auth_form_cb(void *_vpninfo,
 				struct oc_auth_form *form);
+static int webview_cb(struct openconnect_info *vpninfo, const char *uri, void *);
 static void init_token(struct openconnect_info *vpninfo,
 		       oc_token_mode_t token_mode, const char *token_str);
 
@@ -1736,6 +1737,7 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
+	openconnect_set_webview_callback(vpninfo, webview_cb);
 	vpninfo->cbdata = vpninfo;
 #ifdef _WIN32
 	set_default_vpncscript();
@@ -2759,6 +2761,15 @@ static int process_auth_form_cb(void *_vpninfo,
 
  err:
 	return OC_FORM_RESULT_ERR;
+}
+
+static int webview_cb(struct openconnect_info *vpninfo, const char *uri,
+		      void *dummy)
+{
+	printf("Point web browser to this URI and paste the %s token:\n%s\n",
+	       vpninfo->sso_token_cookie, uri);
+	vpninfo->sso_cookie_value = prompt_for_input("SSO cookie: ", vpninfo, 0);
+	return 0;
 }
 
 static int lock_token(void *tokdata)
