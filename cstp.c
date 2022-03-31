@@ -1241,8 +1241,15 @@ void cstp_common_headers(struct openconnect_info *vpninfo, struct oc_text_buf *b
 	buf_append(buf, "Accept: */*\r\n");
 	buf_append(buf, "Accept-Encoding: identity\r\n");
 	buf_append(buf, "X-Transcend-Version: 1\r\n");
-	buf_append(buf, "X-AnyConnect-STRAP-Pubkey: MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEE1kRZ46P1wUKuAWuQaJwjoFpqej5BGnr5ShFZlCKX7FeAaSNYuRUNmPFhp3idqEdlGYfEoGK60sQ0GxjAAnKqg==\r\n");
-	buf_append(buf, "X-AnyConnect-STRAP-DH-Pubkey: MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAElL0KYmYoCmQCHUntB5wdkTYuyyuB4IUBgWgEBpfYVEFhzPZcN8PMTjkM2f7VfpWDTTeUtefLHdtNSQFfkTiFlg==\r\n");
+	/* 
+-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIJwXj5ur5hP1Jxf7Xllgck2Ax/2sjm/UsuivHgSCL6s6oAoGCCqGSM49
+AwEHoUQDQgAEsutmSyTX1k3a3BUaa8iO6eRtsHIpoWvnPOhti8iSKF1zXocjo/YR
+UESOpeyiL7QhZnG6zzkkib7ozC5u5EQw6A==
+-----END EC PRIVATE KEY-----
+	*/
+	buf_append(buf, "X-AnyConnect-STRAP-Pubkey: MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEsutmSyTX1k3a3BUaa8iO6eRtsHIpoWvnPOhti8iSKF1zXocjo/YRUESOpeyiL7QhZnG6zzkkib7ozC5u5EQw6A==\r\n");
+	buf_append(buf, "X-AnyConnect-STRAP-DH-Pubkey: MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEsutmSyTX1k3a3BUaa8iO6eRtsHIpoWvnPOhti8iSKF1zXocjo/YRUESOpeyiL7QhZnG6zzkkib7ozC5u5EQw6A==\r\n");
 	if (vpninfo->xmlpost)
 		buf_append(buf, "X-Aggregate-Auth: 1\r\n");
 	if (vpninfo->try_http_auth)
