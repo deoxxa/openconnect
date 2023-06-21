@@ -785,6 +785,9 @@ int dtls_try_handshake(struct openconnect_info *vpninfo, int *timeout)
 	}
 
 	vpn_progress(vpninfo, PRG_ERR, _("DTLS handshake failed: %d\n"), ret);
+	if (ret == SSL_ERROR_SYSCALL) {
+		vpn_progress(vpninfo, PRG_ERR, "DTLS handshake failed due to SSL_ERROR_SYSCALL: %d %s\n", errno, strerror(errno));
+	}
 	openconnect_report_ssl_errors(vpninfo);
 
 	dtls_close(vpninfo);
