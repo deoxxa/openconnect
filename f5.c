@@ -403,7 +403,7 @@ static int parse_options(struct openconnect_info *vpninfo, char *buf, int len,
 			s = (char *)xmlNodeGetContent(xml_node);
 			if (s && *s) {
 				vpn_progress(vpninfo, PRG_INFO, _("Got WINS/NBNS server %s\n"), s);
-				if (n_nbns < 3) new_ip_info.dns[n_nbns++] = add_option_steal(&new_opts, "WINS", &s);
+				if (n_nbns < 3) new_ip_info.nbns[n_nbns++] = add_option_steal(&new_opts, "WINS", &s);
 			}
 		} else if (!strncmp((char *)xml_node->name, "DNSSuffix", 9) && isdigit(xml_node->name[9])) {
 			free(s);
