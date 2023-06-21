@@ -702,22 +702,26 @@ int f5_bye(struct openconnect_info *vpninfo, const char *reason)
 	int ret;
 
 	/* We need to close and reopen the HTTPS connection (to kill
-	 * the f5 tunnel) and submit a new HTTPS request to logout.
+	 * the f5 tunnel), then submit a new HTTPS request to logout
+	 * unless we've been told not to.
 	 */
 	openconnect_close_https(vpninfo, 0);
 
-	orig_path = vpninfo->urlpath;
-	vpninfo->urlpath = strdup("vdesk/hangup.php3?hangup_error=1"); /* redirect segfaults without strdup */
-	ret = do_https_request(vpninfo, "GET", NULL, NULL, &res_buf, NULL, HTTP_NO_FLAGS);
-	free(vpninfo->urlpath);
-	vpninfo->urlpath = orig_path;
+	if (!vpninfo->no_logout_on_disconnect) {
+		orig_path = vpninfo->urlpath;
+		vpninfo->urlpath = strdup("vdesk/hangup.php3?hangup_error=1"); /* redirect segfaults without strdup */
+		ret = do_https_request(vpninfo, "GET", NULL, NULL, &res_buf, NULL, HTTP_NO_FLAGS);
+		free(vpninfo->urlpath);
+		vpninfo->urlpath = orig_path;
 
-	if (ret < 0)
-		vpn_progress(vpninfo, PRG_ERR, _("Logout failed.\n"));
-	else
-		vpn_progress(vpninfo, PRG_INFO, _("Logout successful.\n"));
+		if (ret < 0)
+			vpn_progress(vpninfo, PRG_ERR, _("Logout failed.\n"));
+		else
+			vpn_progress(vpninfo, PRG_INFO, _("Logout successful.\n"));
 
-	free(res_buf);
+		free(res_buf);
+	}
+
 	return ret;
 }
 

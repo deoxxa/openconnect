@@ -521,6 +521,7 @@ struct openconnect_info {
 	time_t last_trojan;
 	int no_http_keepalive;
 	int dump_http_traffic;
+	int no_logout_on_disconnect;
 
 	int token_mode;
 	int token_bypassed;
