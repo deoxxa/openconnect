@@ -215,6 +215,7 @@ enum {
 	OPT_HTTP_AUTH,
 	OPT_LOCAL_HOSTNAME,
 	OPT_PROTOCOL,
+	OPT_NO_LOGOUT_ON_DISCONNECT,
 	OPT_PASSTOS,
 	OPT_VERSION,
 	OPT_SERVER,
@@ -278,6 +279,7 @@ static const struct option long_options[] = {
 	OPTION("authenticate", 0, OPT_AUTHENTICATE),
 	OPTION("cookieonly", 0, OPT_COOKIEONLY),
 	OPTION("printcookie", 0, OPT_PRINTCOOKIE),
+	OPTION("no-logout-on-disconnect", 0, OPT_NO_LOGOUT_ON_DISCONNECT),
 	OPTION("quiet", 0, 'q'),
 	OPTION("queue-len", 1, 'Q'),
 	OPTION("xmlconfig", 1, 'x'),
@@ -948,6 +950,7 @@ static void usage(void)
 	printf("      --passwd-on-stdin           %s\n", _("Read password from standard input"));
 	printf("      --authgroup=GROUP           %s\n", _("Select GROUP from authentication dropdown (may be known"));
 	printf("                                  %s\n", _("as \"realm\", \"domain\", \"gateway\"; protocol-dependent)"));
+	printf("      --no-logout-on-disconnect   %s\n", _("Disable logout on disconnect (applies only to f5 protocol)"));
 	printf("  -F, --form-entry=FORM:OPT=VALUE %s\n", _("Provide authentication form responses"));
 	printf("  -c, --certificate=CERT          %s\n", _("Use SSL client certificate CERT"));
 	printf("  -k, --sslkey=KEY                %s\n", _("Use SSL private key file KEY"));
@@ -1945,6 +1948,9 @@ int main(int argc, char **argv)
 			break;
 		case OPT_NO_PASSWD:
 			vpninfo->nopasswd = 1;
+			break;
+		case OPT_NO_LOGOUT_ON_DISCONNECT:
+			vpninfo->no_logout_on_disconnect = 1;
 			break;
 		case OPT_NO_XMLPOST:
 			openconnect_set_xmlpost(vpninfo, 0);
